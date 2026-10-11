@@ -45,32 +45,65 @@ def load_dotenv(path: str = ".env"):
             os.environ[key] = value
 
 
-def build_fallback_memo(applicant_id, decision, reason_list, chunks) -> str:
+def build_fallback_memo(applicant_id, decision, reason_list, retriever) -> str:
     """Deterministic, template-based memo built from the same structured
     data -- used whenever no API key is configured, so the project works
-    for anyone who clones it without needing credentials."""
+    for anyone who clones it without needing credentials.
+
+    Every policy-based statement gets its own inline citation, resolved by
+    a targeted search for exactly what that statement needs (not a broad
+    merged retrieval): the band decision cites the Risk Bands section, each
+    triggered rule cites the Hard Policy Rules section, and the customer
+    reason codes cite the Adverse Action section. Only sections that are
+    actually cited inline end up in the reference list -- nothing is listed
+    "just in case" it might be relevant.
+    """
+    citation_map = {}  # (doc, section) -> citation number, in order of first use
+    cited_chunks = []
+
+    def cite(query: str):
+        hits = retriever.search(query, top_k=1)
+        if not hits:
+            return None
+        chunk = hits[0]
+        key = (chunk["doc"], chunk["section"])
+        if key not in citation_map:
+            citation_map[key] = len(citation_map) + 1
+            cited_chunks.append(chunk)
+        return citation_map[key]
+
+    band_cite = cite(f"Band {decision['band']} {decision['band_decision']} risk band score cut-off decision")
+    band_mark = f" [{band_cite}]" if band_cite else ""
+
     lines = [
-        f"CREDIT MEMO (template -- no ANTHROPIC_API_KEY configured)",
+        "CREDIT MEMO (template -- no ANTHROPIC_API_KEY configured)",
         f"Applicant: {applicant_id}",
-        f"Score: {decision['score']:.0f}   Band: {decision['band']} (target: see policy [1])",
-        f"Automated band decision: {decision['band_decision']}",
+        f"Score: {decision['score']:.0f}   Band: {decision['band']}{band_mark}",
+        f"Automated band decision: {decision['band_decision']}{band_mark}",
         f"FINAL DECISION: {decision['final_decision']}",
         "",
-        "Top reason codes (customer-friendly):",
     ]
-    for r in reason_list:
-        lines.append(f"  - {friendly_reason(r['variable'], r['applicant_bin'])} (-{r['points_lost']:.0f} pts vs. best case)")
+
+    if reason_list:
+        reason_cite = cite("principal reasons reason codes variables bins points best bin adverse action notice should contain")
+        reason_mark = f" [{reason_cite}]" if reason_cite else ""
+        lines.append(f"Top reason codes (customer-friendly){reason_mark}:")
+        for r in reason_list:
+            lines.append(f"  - {friendly_reason(r['variable'], r['applicant_bin'])} (-{r['points_lost']:.0f} pts vs. best case)")
 
     if decision["rule_details"]:
+        rule_query = " ".join(f"{rid} {desc} {action}" for rid, desc, action in decision["rule_details"])
+        rule_cite = cite(rule_query)
+        rule_mark = f" [{rule_cite}]" if rule_cite else ""
         lines.append("")
-        lines.append("Hard policy rules triggered:")
+        lines.append(f"Hard policy rules triggered{rule_mark}:")
         for rule_id, desc, action in decision["rule_details"]:
-            lines.append(f"  - {rule_id}: {desc}")
+            lines.append(f"  - {rule_id}: {desc}{rule_mark}")
 
     lines.append("")
     lines.append("Policy references:")
-    for c in chunks:
-        lines.append(f"  [{c['citation']}] {c['doc']} -- {c['section']}")
+    for chunk in cited_chunks:
+        lines.append(f"  [{citation_map[(chunk['doc'], chunk['section'])]}] {chunk['doc']} -- {chunk['section']}")
 
     lines.append("")
     lines.append("This applicant's data never leaves the local machine in template mode; "
@@ -78,14 +111,15 @@ def build_fallback_memo(applicant_id, decision, reason_list, chunks) -> str:
     return "\n".join(lines)
 
 
-def generate_memo(applicant_id, decision, reason_list, chunks) -> str:
+def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
     load_dotenv()
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        return build_fallback_memo(applicant_id, decision, reason_list, chunks)
+        return build_fallback_memo(applicant_id, decision, reason_list, retriever)
 
     import anthropic
 
+    chunks = retrieve_for_applicant(decision, reason_list, retriever)
     client = anthropic.Anthropic(api_key=api_key)
 
     friendly_reasons = "\n".join(
@@ -161,8 +195,7 @@ if __name__ == "__main__":
         row = test.loc[applicant_id]
         decision = make_decision(row, scores[applicant_id], bands[applicant_id])
         r_codes = reason_codes(points_table, features_b, bin_labels.loc[applicant_id])
-        retrieved = retrieve_for_applicant(decision, r_codes, retriever)
-        memo = generate_memo(applicant_id, decision, r_codes, retrieved)
+        memo = generate_memo(applicant_id, decision, r_codes, retriever)
         memos[label] = (applicant_id, memo)
         print(f"=== {label}: memo generated for applicant {applicant_id} ({len(memo)} chars) ===")
 

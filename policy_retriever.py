@@ -36,11 +36,20 @@ class PolicyRetriever:
         self.vectorizer = TfidfVectorizer(stop_words="english")
         self.matrix = self.vectorizer.fit_transform(c["text"] for c in chunks)
 
-    def search(self, query: str, top_k: int = 2) -> list:
+    # Below this, a hit is treated as coincidental word overlap rather than
+    # genuine topical relevance. Picked by inspecting scores across all 9
+    # queries run for the 3 example applicants (low/medium/high risk): every
+    # query's own intended top match scored >= 0.176, while spurious
+    # secondary hits (e.g. "Conditions for Band C" surfacing on an R5 query
+    # about missing delinquency data) scored <= 0.152. 0.16 sits in that gap.
+    MIN_SIMILARITY = 0.16
+
+    def search(self, query: str, top_k: int = 2, min_score: float = None) -> list:
+        min_score = self.MIN_SIMILARITY if min_score is None else min_score
         query_vec = self.vectorizer.transform([query])
         scores = cosine_similarity(query_vec, self.matrix)[0]
         ranked = scores.argsort()[::-1][:top_k]
-        return [{**self.chunks[i], "score": float(scores[i])} for i in ranked if scores[i] > 0]
+        return [{**self.chunks[i], "score": float(scores[i])} for i in ranked if scores[i] >= min_score]
 
 
 def retrieve_for_applicant(decision: dict, reason_codes: list, retriever: PolicyRetriever, top_k: int = 2) -> list:
