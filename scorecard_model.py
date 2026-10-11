@@ -38,14 +38,18 @@ class WoeTransformer:
             ftype = "cap"
             edges = None
             bin_id = non_missing.clip(upper=cap).astype(int)
+            bin_label_map = {v: (str(v) if v < cap else f"{cap}+") for v in range(cap + 1)}
         elif non_missing.nunique() <= LOW_CARDINALITY_THRESHOLD:
             ftype = "low_card"
             edges = {v: i + 1 for i, v in enumerate(sorted(non_missing.unique()))}
             bin_id = non_missing.map(edges)
+            bin_label_map = {rank: str(v) for v, rank in edges.items()}
         else:
             ftype = "quantile"
             bin_id, raw_edges = pd.qcut(non_missing, q=MAX_BINS, labels=False, duplicates="drop", retbins=True)
             bin_id = pd.Series(bin_id, index=non_missing.index) + 1
+            categories = pd.qcut(non_missing, q=MAX_BINS, duplicates="drop").cat.categories
+            bin_label_map = {i + 1: str(cat) for i, cat in enumerate(categories)}
             raw_edges = raw_edges.copy()
             raw_edges[0], raw_edges[-1] = -np.inf, np.inf  # so test values outside train's range still bin correctly
             edges = raw_edges
@@ -56,19 +60,25 @@ class WoeTransformer:
         min_count = max(1, int(len(non_missing) * MIN_BIN_SIZE))
 
         bin_id_to_group, merged = self._merge_to_monotonic(grouped, min_count)
+        merged["label"] = merged["members"].apply(
+            lambda members: " | ".join(bin_label_map[m] for m in sorted(members))
+        )
 
-        final = merged[["group_id", "total", "bad"]].rename(columns={"group_id": "label"})
+        final = merged[["group_id", "total", "bad", "label"]]
         if missing_mask.any():
             final = pd.concat([final, pd.DataFrame({
-                "label": ["Missing"], "total": [missing_mask.sum()], "bad": [y[missing_mask].sum()],
+                "group_id": ["Missing"], "total": [missing_mask.sum()], "bad": [y[missing_mask].sum()],
+                "label": ["Missing"],
             })], ignore_index=True)
 
         stats = _bin_stats(final["total"], final["bad"])
-        woe_map = dict(zip(final["label"], stats["woe"]))
+        woe_map = dict(zip(final["group_id"], stats["woe"]))
+        label_map = dict(zip(final["group_id"], final["label"]))
 
         return {
             "type": ftype, "cap": cap, "edges": edges,
-            "bin_id_to_group": bin_id_to_group, "woe_map": woe_map, "iv": stats["iv"].sum(),
+            "bin_id_to_group": bin_id_to_group, "woe_map": woe_map,
+            "label_map": label_map, "iv": stats["iv"].sum(),
         }
 
     @staticmethod
@@ -173,9 +183,11 @@ def evaluate(model, transformer: WoeTransformer, df: pd.DataFrame, target: str, 
     return auc, gini_from_auc(auc)
 
 
-if __name__ == "__main__":
-    pd.set_option("display.width", 140)
-
+def run_pipeline(verbose: bool = True):
+    """Build the WoE transformer and both models (all-variables and fair
+    lending), fit on train, evaluate on test. Returns a dict of the fitted
+    objects so other steps (e.g. the points scorecard) can reuse them
+    without recomputing or duplicating this logic."""
     df = pd.read_csv("Data/cs-training-cleaned.csv", index_col=0)
     all_features = [c for c in df.columns if c != TARGET]
 
@@ -184,32 +196,50 @@ if __name__ == "__main__":
     transformer = WoeTransformer().fit(train, TARGET, all_features)
     kept_features = [f for f, iv in transformer.iv_.items() if iv >= IV_KEEP_THRESHOLD]
     dropped_low_iv = [f for f in all_features if f not in kept_features]
-    print("Features kept (IV >= {:.2f}): {}".format(IV_KEEP_THRESHOLD, kept_features))
-    print("Features dropped for low IV:", dropped_low_iv if dropped_low_iv else "none")
+    if verbose:
+        print("Features kept (IV >= {:.2f}): {}".format(IV_KEEP_THRESHOLD, kept_features))
+        print("Features dropped for low IV:", dropped_low_iv if dropped_low_iv else "none")
 
     woe_train = transformer.transform_all(train)
     y_train = train[TARGET]
 
-    print("\n=== MODEL A: all variables ===")
+    if verbose:
+        print("\n=== MODEL A: all variables ===")
     model_a, features_a, dropped_a = fit_with_sign_check(woe_train, y_train, kept_features)
-    for var, coef in dropped_a:
-        print(f"Dropped '{var}' (coef was {coef:.4f}, expected negative) -- refit without it.")
-    print(model_a.summary2().tables[1])
+    if verbose:
+        for var, coef in dropped_a:
+            print(f"Dropped '{var}' (coef was {coef:.4f}, expected negative) -- refit without it.")
+        print(model_a.summary2().tables[1])
 
-    print("\n=== MODEL B: fair lending (excludes age, NumberOfDependents) ===")
+    if verbose:
+        print("\n=== MODEL B: fair lending (excludes age, NumberOfDependents) ===")
     fair_features = [f for f in kept_features if f not in FAIR_LENDING_EXCLUDE]
     model_b, features_b, dropped_b = fit_with_sign_check(woe_train, y_train, fair_features)
-    for var, coef in dropped_b:
-        print(f"Dropped '{var}' (coef was {coef:.4f}, expected negative) -- refit without it.")
-    print(model_b.summary2().tables[1])
+    if verbose:
+        for var, coef in dropped_b:
+            print(f"Dropped '{var}' (coef was {coef:.4f}, expected negative) -- refit without it.")
+        print(model_b.summary2().tables[1])
 
     auc_a, gini_a = evaluate(model_a, transformer, test, TARGET, features_a)
     auc_b, gini_b = evaluate(model_b, transformer, test, TARGET, features_b)
 
-    print("\n=== TEST SET PERFORMANCE ===")
-    print(f"Model A (all variables)   -- features: {features_a}")
-    print(f"  AUC = {auc_a:.4f}   Gini = {gini_a:.4f}")
-    print(f"Model B (fair lending)    -- features: {features_b}")
-    print(f"  AUC = {auc_b:.4f}   Gini = {gini_b:.4f}")
-    print(f"\nGini lost by excluding age & NumberOfDependents: {gini_a - gini_b:.4f} "
-          f"({(gini_a - gini_b) / gini_a:.1%} relative drop)")
+    if verbose:
+        print("\n=== TEST SET PERFORMANCE ===")
+        print(f"Model A (all variables)   -- features: {features_a}")
+        print(f"  AUC = {auc_a:.4f}   Gini = {gini_a:.4f}")
+        print(f"Model B (fair lending)    -- features: {features_b}")
+        print(f"  AUC = {auc_b:.4f}   Gini = {gini_b:.4f}")
+        print(f"\nGini lost by excluding age & NumberOfDependents: {gini_a - gini_b:.4f} "
+              f"({(gini_a - gini_b) / gini_a:.1%} relative drop)")
+
+    return {
+        "train": train, "test": test, "transformer": transformer,
+        "model_a": model_a, "features_a": features_a,
+        "model_b": model_b, "features_b": features_b,
+        "auc_a": auc_a, "gini_a": gini_a, "auc_b": auc_b, "gini_b": gini_b,
+    }
+
+
+if __name__ == "__main__":
+    pd.set_option("display.width", 140)
+    run_pipeline(verbose=True)
