@@ -73,33 +73,33 @@ if __name__ == "__main__":
     auc_champ, gini_champ = champion["auc_b"], champion["gini_b"]
     ks_champ = ks_statistic(test[TARGET].values, pred_champ)
 
-    print("\n=== CHAMPION vs CHALLENGER vs FAIR-LENDING CHALLENGER (test set) ===")
+    print("\n=== CHAMPION vs OFFICIAL CHALLENGER vs ALL-FEATURES REFERENCE (test set) ===")
     comparison = pd.DataFrame({
         "model": [
-            "Scorecard (Model B, fair lending, WoE logistic regression)",
-            "LightGBM (all raw features, incl. age & dependents)",
-            "LightGBM (fair lending, excl. age & dependents)",
+            "Scorecard (Model B, fair lending, WoE logistic regression) -- CHAMPION",
+            "LightGBM (fair lending, excl. age & dependents) -- OFFICIAL CHALLENGER",
+            "LightGBM (all raw features, incl. age & dependents) -- reference only",
         ],
-        "AUC": [auc_champ, auc_lgb, auc_lgb_fair],
-        "Gini": [gini_champ, gini_lgb, gini_lgb_fair],
-        "KS": [ks_champ, ks_lgb, ks_lgb_fair],
+        "AUC": [auc_champ, auc_lgb_fair, auc_lgb],
+        "Gini": [gini_champ, gini_lgb_fair, gini_lgb],
+        "KS": [ks_champ, ks_lgb_fair, ks_lgb],
     })
     print(comparison.to_string(index=False))
-    print(f"\nLightGBM (all features) Gini advantage over scorecard: {gini_lgb - gini_champ:+.4f} ({(gini_lgb - gini_champ) / gini_champ:+.1%} relative)")
-    print(f"LightGBM (fair lending) Gini advantage over scorecard: {gini_lgb_fair - gini_champ:+.4f} ({(gini_lgb_fair - gini_champ) / gini_champ:+.1%} relative)")
+    print(f"\nOfficial challenger (fair-lending LightGBM) Gini advantage over scorecard: {gini_lgb_fair - gini_champ:+.4f} ({(gini_lgb_fair - gini_champ) / gini_champ:+.1%} relative)")
+    print(f"All-features LightGBM Gini advantage over scorecard: {gini_lgb - gini_champ:+.4f} ({(gini_lgb - gini_champ) / gini_champ:+.1%} relative) -- not usable, uses protected attributes")
     print(f"LightGBM Gini COST of removing age & NumberOfDependents: {gini_lgb - gini_lgb_fair:.4f} ({(gini_lgb - gini_lgb_fair) / gini_lgb:.1%} relative drop)")
 
-    # ================= SHAP =================
-    print("\n=== Computing SHAP values (TreeExplainer) ===")
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer(X_test)
+    # ================= SHAP (official challenger = fair-lending LightGBM) =================
+    print("\n=== Computing SHAP values for the OFFICIAL CHALLENGER (fair-lending LightGBM) ===")
+    explainer = shap.TreeExplainer(model_fair)
+    shap_values = explainer(X_test_fair)
 
     plt.figure(figsize=(8, 6))
-    shap.summary_plot(shap_values, X_test, show=False, plot_size=None)
+    shap.summary_plot(shap_values, X_test_fair, show=False, plot_size=None)
     fig = plt.gcf()
     fig.set_size_inches(8, 6)
     ax = fig.axes[0]
-    ax.set_title("SHAP Summary -- What Drives LightGBM's Predictions (test set)")
+    ax.set_title("SHAP Summary -- Fair-Lending LightGBM Challenger (test set)")
     fig.tight_layout()
     fig.savefig(f"{FIG_DIR}/shap_summary.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -107,14 +107,14 @@ if __name__ == "__main__":
 
     # Individual applicant -- same low-score applicant highlighted in step 5
     applicant_id = 104180
-    if applicant_id not in X_test.index:
-        applicant_id = y_test.index[np.argmax(pred_lgb)]  # fall back to highest-risk applicant
-    row_pos = X_test.index.get_loc(applicant_id)
+    if applicant_id not in X_test_fair.index:
+        applicant_id = y_test.index[np.argmax(pred_lgb_fair)]  # fall back to highest-risk applicant
+    row_pos = X_test_fair.index.get_loc(applicant_id)
 
     plt.figure()
     shap.plots.waterfall(shap_values[row_pos], show=False)
     fig = plt.gcf()
-    fig.suptitle(f"SHAP Explanation -- Applicant {applicant_id} (LightGBM predicted PD = {pred_lgb[row_pos]:.1%})", fontsize=10)
+    fig.suptitle(f"SHAP Explanation -- Applicant {applicant_id} (Fair-Lending LightGBM predicted PD = {pred_lgb_fair[row_pos]:.1%})", fontsize=10)
     fig.tight_layout()
     fig.savefig(f"{FIG_DIR}/shap_individual.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
