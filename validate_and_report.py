@@ -82,13 +82,17 @@ BAND_DEFS = [
 
 
 def assign_bands(total_score):
+    """Each cutoff score is the FIRST (lowest) score that belongs to the
+    band it's named after -- e.g. cutoff_D=527 means Band D starts AT 527,
+    so Band E is scores <= 526. Bins are therefore left-closed/right-open
+    ([lo, hi)), with no gaps or overlaps between adjacent bands."""
     cutoff_02 = round(pd_to_score(0.02))
     cutoff_05 = round(pd_to_score(0.05))
     cutoff_10 = round(pd_to_score(0.10))
     cutoff_20 = round(pd_to_score(0.20))
     edges = [-np.inf, cutoff_20, cutoff_10, cutoff_05, cutoff_02, np.inf]
     labels = ["E", "D", "C", "B", "A"]
-    bands = pd.cut(total_score, bins=edges, labels=labels, right=True)
+    bands = pd.cut(total_score, bins=edges, labels=labels, right=False)
     cutoffs = {"A": cutoff_02, "B": cutoff_05, "C": cutoff_10, "D": cutoff_20}
     return bands, cutoffs
 
@@ -124,11 +128,11 @@ if __name__ == "__main__":
     print("\n=== RISK BANDS ===")
     bands_test, cutoffs = assign_bands(score_test)
     print("Score cut-offs derived from the points formula (Score = Offset + Factor * ln(odds)):")
-    print(f"  A: score > {cutoffs['A']}")
-    print(f"  B: {cutoffs['B']} < score <= {cutoffs['A']}")
-    print(f"  C: {cutoffs['C']} < score <= {cutoffs['B']}")
-    print(f"  D: {cutoffs['D']} < score <= {cutoffs['C']}")
-    print(f"  E: score <= {cutoffs['D']}")
+    print(f"  A: score >= {cutoffs['A']}")
+    print(f"  B: {cutoffs['B']} <= score <= {cutoffs['A'] - 1}")
+    print(f"  C: {cutoffs['C']} <= score <= {cutoffs['B'] - 1}")
+    print(f"  D: {cutoffs['D']} <= score <= {cutoffs['C'] - 1}")
+    print(f"  E: score <= {cutoffs['D'] - 1}")
 
     rows = []
     for band, lo, hi, decision, target_range in BAND_DEFS:
