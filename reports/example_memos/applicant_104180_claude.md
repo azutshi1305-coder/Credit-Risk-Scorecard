@@ -4,7 +4,7 @@ Generated via the Claude API (model: claude-opus-5-5), using only the retrieved 
 
 ---
 
-# Credit Memo: Sample Bank Retail Credit
+# Credit Memo: Retail Credit
 
 ## 1. Application Details
 | Field | Value |

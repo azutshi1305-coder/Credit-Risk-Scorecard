@@ -1,9 +1,9 @@
-# Credit Risk Scorecard -- Sample Bank
+# Credit Risk Scorecard
 
 **Author:** Annapurna Zutshi
 
-> "Sample Bank" is a fictional lender. This is a portfolio project built end
-> to end on the Kaggle "Give Me Some Credit" dataset -- not a real bank, not
+> A portfolio project built end to end on the Kaggle "Give Me Some Credit"
+> dataset -- not a real bank, not
 > real applicants, and nothing here is legal, compliance, or credit advice.
 
 ## Project Summary
@@ -161,8 +161,9 @@ scorecard_model.py        Step 4: WoE transformer + logistic regression (champio
 points_scorecard.py        Step 5: points conversion, scoring, reason codes
 validate_and_report.py      Step 6: AUC/Gini/KS/PSI, risk bands, charts
 challenger_model.py         Step 7: LightGBM challengers + SHAP
-policies/                   Step 8a: fictional Sample Bank policy documents
+policies/                   Step 8a: illustrative bank policy documents
 decision_engine.py          Step 8a: hard rules + band -> final decision
+portfolio_economics.py      Cut-off trade-off and expected loss (PD x LGD x EAD) by band
 policy_retriever.py         Step 8b: TF-IDF chunking and retrieval over policies/
 rag_memo.py                 Step 8b: credit memo generation (Claude or template fallback)
 app.py                      Step 9: Streamlit app (form + result + about-the-model pages)
@@ -187,7 +188,7 @@ reports/screens/             App screenshots (if captured -- see Screens below)
   on one year, test on the next) to check the model still performs as the
   applicant population and economic conditions drift -- this project doesn't
   have a date field to do that.
-- **Policies are illustrative, not real.** "Sample Bank" and its three
+- **Policies are illustrative, not real.** The three
   policy documents were written for this project to give the decision
   engine and RAG assistant something concrete to work against. They are
   plausible summaries of real regulatory concepts (ECOA/Reg B, RBI Fair

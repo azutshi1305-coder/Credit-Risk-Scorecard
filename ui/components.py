@@ -15,10 +15,30 @@ def top_bar_title_html() -> str:
     segmented_control widget -- not a standalone bar, since the control
     itself must be an interactive Streamlit widget, not static HTML."""
     return (
-        '<div class="sb-brand"><div class="sb-logo">SB</div><div>'
-        '<div class="sb-topbar-title">Sample Bank</div>'
+        '<div class="sb-brand"><div class="sb-logo">'
+        '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.2" '
+        'stroke-linecap="round" aria-hidden="true"><path d="M4 17a8 8 0 0 1 16 0"/>'
+        '<path d="M12 17l4.2-5.2"/><circle cx="12" cy="17" r="1.3" fill="#fff" stroke="none"/></svg></div><div>'
+        '<div class="sb-topbar-title">Credit Assessment</div>'
         '<div class="sb-topbar-sub">Retail credit decisioning</div></div></div>'
     )
+
+
+def stepper_html(steps, current: int) -> str:
+    """Progress strip across the top of the wizard: finished steps get a tick,
+    the current one is outlined, later ones stay grey."""
+    items = []
+    for i, label in enumerate(steps):
+        state = "done" if i < current else ("current" if i == current else "todo")
+        mark = "&#10003;" if i < current else str(i + 1)
+        items.append(
+            f'<div class="sb-step sb-step-{state}"><div class="sb-step-dot">{mark}</div>'
+            f'<div class="sb-step-label">{esc(label)}</div></div>'
+        )
+    pct = int(round(100 * current / max(len(steps) - 1, 1)))
+    return (f'<div class="sb-stepper" style="--sb-step-pct:{pct}%">'
+            f'<div class="sb-stepper-track"><div class="sb-stepper-fill"></div></div>'
+            + "".join(items) + "</div>")
 
 
 def ruler_scale(score: float, cutoffs: dict):

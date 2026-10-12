@@ -31,7 +31,7 @@ BAND_FULL = {
 
 CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Public+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Nunito+Sans:ital,wght@0,400;0,600;1,400&family=Public+Sans:wght@400;500;600&display=swap');
 
 :root {{
     --ledger: {COLORS['ledger']}; --ledger-hover: {COLORS['ledger_hover']};
@@ -289,5 +289,48 @@ div[data-testid="stTooltipContent"] {{ font-size: 0.86rem; line-height: 1.5; max
 /* body copy rhythm */
 .stApp p, .stApp li {{ line-height: 1.55; }}
 .sb-error {{ color: {COLORS['decline']}; font-size: 0.85rem; margin-top: 0.3rem; }}
+/* ---- step-by-step wizard ---- */
+.sb-stepper {{ position: relative; display: flex; justify-content: space-between; margin: 0.2rem 0 1.6rem; }}
+.sb-stepper-track {{ position: absolute; top: 15px; left: 10%; right: 10%; height: 3px; background: var(--rule); border-radius: 2px; }}
+.sb-stepper-fill {{ height: 100%; width: var(--sb-step-pct); background: var(--ledger); border-radius: 2px; transition: width .35s ease; }}
+.sb-step {{ position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }}
+.sb-step-dot {{
+    width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 0.85rem; background: var(--white); border: 2px solid var(--rule); color: var(--muted);
+    transition: all .25s ease;
+}}
+.sb-step-label {{ font-size: 0.74rem; color: var(--muted); text-align: center; line-height: 1.2; }}
+.sb-step-done .sb-step-dot {{ background: var(--ledger); border-color: var(--ledger); color: #fff; }}
+.sb-step-current .sb-step-dot {{ border-color: var(--ledger); color: var(--ledger); box-shadow: 0 0 0 5px {COLORS['teal_tint']}; }}
+.sb-step-current .sb-step-label {{ color: var(--ink); font-weight: 600; }}
+.sb-step-done .sb-step-label {{ color: var(--ledger); }}
+.sb-q-title {{ font-family: 'Lora', serif; font-weight: 600; font-size: 1.5rem; color: var(--ink); margin: 0 0 0.3rem; line-height: 1.25; }}
+.sb-q-help {{ color: var(--muted); font-size: 0.92rem; margin: 0 0 1.1rem; max-width: 60ch; }}
+.sb-review-label {{ color: var(--muted); font-size: 0.8rem; }}
+.sb-review-value {{ font-weight: 600; font-size: 0.98rem; color: var(--ink); }}
+.sb-review-row {{ border-bottom: 1px solid var(--rule); padding: 0.55rem 0; }}
+div[class*="st-key-step_body_"] {{ animation: sbStepIn .28s ease-out both; }}
+@keyframes sbStepIn {{ from {{ opacity: 0; transform: translateX(14px); }} to {{ opacity: 1; transform: none; }} }}
+@media (prefers-reduced-motion: reduce) {{
+    div[class*="st-key-step_body_"] {{ animation: none; }}
+    .sb-stepper-fill, .sb-step-dot {{ transition: none; }}
+}}
+@media (max-width: 640px) {{ .sb-step-label {{ font-size: 0.66rem; }} .sb-q-title {{ font-size: 1.25rem; }} }}
+/* ---- credit memo: softer, rounder reading face ---- */
+.st-key-memo_text p, .st-key-memo_text li, .st-key-memo_text td, .st-key-memo_text th {{
+    font-family: 'Nunito Sans', 'Public Sans', sans-serif !important; font-weight: 400;
+    color: #3B4D51 !important; font-size: 1rem; line-height: 1.7;
+}}
+.st-key-memo_text strong, .st-key-memo_text b {{ font-weight: 600; color: var(--ink); }}
+.st-key-memo_text h1, .st-key-memo_text h2, .st-key-memo_text h3 {{
+    font-family: 'Lora', serif; color: var(--ledger); font-weight: 600; margin: 1.1rem 0 .3rem; padding: 0;
+}}
+.st-key-memo_text h1 {{ font-size: 1.3rem; }} .st-key-memo_text h2 {{ font-size: 1.15rem; }} .st-key-memo_text h3 {{ font-size: 1.05rem; }}
+.st-key-memo_text li::marker {{ color: var(--brass); }}
+.sb-eco-note {{
+    background: {COLORS['teal_tint']}; border-left: 3px solid var(--ledger); border-radius: 0 6px 6px 0;
+    padding: .7rem 1rem; font-size: .9rem; color: var(--ink); margin-top: .9rem;
+}}
+.sb-eco-note b {{ color: var(--ledger); }}
 </style>
 """

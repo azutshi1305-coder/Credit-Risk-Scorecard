@@ -132,7 +132,7 @@ def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
     policy_text = "\n\n".join(f"[{c['citation']}] ({c['doc']} -- {c['section']})\n{c['text']}" for c in chunks)
 
     system = (
-        "You are a credit memo writer for Sample Bank's retail credit team. "
+        "You are a credit memo writer for a bank's retail credit team. "
         "Write a short, professional credit memo using ONLY the retrieved policy text provided below -- "
         "do not invent policy that isn't in the retrieved text. "
         "Every policy-based statement you make must cite the retrieved chunk it came from, in the form [1], [2], etc., "

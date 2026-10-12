@@ -1,8 +1,8 @@
-# Sample Bank — Fair Lending and Adverse Action Summary
+# Fair Lending and Adverse Action Summary
 
-> **FICTIONAL / ILLUSTRATIVE DOCUMENT — NOT LEGAL ADVICE.** "Sample Bank" is
-> not a real institution. This is a plain-language, high-level summary
-> written for a personal portfolio project. It is not a substitute for
+> **Illustrative document — not legal advice.** This is a plain-language,
+> high-level summary written to demonstrate a credit risk scorecard build.
+> It is not a substitute for
 > legal review and must not be relied on for actual compliance decisions.
 > Real institutions must consult qualified counsel and the current text of
 > applicable law and regulation.
@@ -10,7 +10,7 @@
 ## 1. Purpose and Disclaimer
 
 This document summarizes, at a plain-language level, two regulatory regimes
-that shape how Sample Bank communicates credit decisions, and explains a
+that shape how the bank communicates credit decisions, and explains a
 design choice made in the scorecard build. It is deliberately simplified for
 illustration and omits many details, exceptions, and jurisdiction-specific
 rules that would matter in a real implementation.
@@ -60,7 +60,7 @@ expect to see documented before approving a scorecard for production use.
 
 ## 5. Adverse Action / Rejection Notice — What It Should Contain
 
-For any Refer-to-underwriter-then-decline or Decline outcome, Sample Bank's
+For any Refer-to-underwriter-then-decline or Decline outcome, the bank's
 notice to the applicant should state, in plain language:
 
 1. That the application was not approved (or was referred and subsequently

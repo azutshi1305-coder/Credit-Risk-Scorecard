@@ -1,3 +1,4 @@
+import re
 import os
 import random
 from datetime import datetime
@@ -14,13 +15,14 @@ from policy_retriever import load_policy_chunks, PolicyRetriever
 from rag_memo import generate_memo_with_mode
 from challenger_model import compare_models
 from pdf_report import build_pdf_report
+import portfolio_economics as pe
 
 from ui.theme import CSS
 from ui import view_model as vm
 from ui import components as comp
 from ui import form_help as FH
 
-st.set_page_config(page_title="Sample Bank -- Credit Assessment", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Credit Assessment", layout="wide", initial_sidebar_state="collapsed")
 # st.html drops a style-only block in Streamlit 1.45, so the theme must be
 # injected through st.markdown (a <style> HTML block is passed through intact).
 st.markdown(CSS, unsafe_allow_html=True)
@@ -64,6 +66,16 @@ def champion_metrics():
     return {"gini": result["gini_b"], "auc": result["auc_b"], "ks": ks}
 
 
+@st.cache_data
+def portfolio_view():
+    """Cut-off trade-off and expected loss by band, measured on the test set."""
+    result, points_table, _ = load_pipeline()
+    _, _, scores, _ = score_applicants(result["test"], result["transformer"], result["features_b"], points_table)
+    bands, cutoffs = assign_bands(scores)
+    y = result["test"].loc[scores.index, TARGET].values
+    return pe.summarise(bands.astype(str).values, y, cutoffs)
+
+
 result, points_table, retriever = load_pipeline()
 transformer, model_b, features_b = result["transformer"], result["model_b"], result["features_b"]
 
@@ -74,7 +86,7 @@ if "page" not in st.session_state:
 if "assessment" not in st.session_state:
     st.session_state.assessment = None
 if "applicant_ref" not in st.session_state:
-    st.session_state.applicant_ref = f"SB-{datetime.now().year}-{random.randint(0, 9999):04d}"
+    st.session_state.applicant_ref = f"CR-{datetime.now().year}-{random.randint(0, 9999):04d}"
 
 
 # ============================= TOP BAR =============================
@@ -131,104 +143,174 @@ def quick_score(row: pd.Series):
     return decision, bin_labels, points_df, base_points
 
 
-def _section(num: int, title: str, helper: str):
-    """Numbered section: a step badge + title + helper text rendered as one HTML header
-    (no extra st.columns level, so the body can still hold a two-field st.columns row)."""
-    st.markdown(
-        f'<div class="sb-sec"><span class="sb-sec-num">{num}</span>'
-        f'<div><div class="sb-section-title">{title}</div><div class="sb-helper">{helper}</div></div></div>',
-        unsafe_allow_html=True)
-    return st.container(key=f"section_body_{num}")
+STEPS = ["Applicant", "Credit usage", "Payment history", "Income & debt", "Review"]
 
 
-def _slider_field(label, key, max_value, help_text):
-    """A 0–max % slider that counts as unanswered until the user actually moves it,
-    so the form has no silent default values."""
-    set_key = f"{key}_set"
-    st.session_state.setdefault(set_key, False)
+def _data():
+    return st.session_state.setdefault("app_data", {})
 
-    def _mark_set():
-        st.session_state[set_key] = True
 
-    value = st.slider(label, min_value=0, max_value=max_value, value=0, step=1, format="%d%%",
-                      key=key, help=help_text, on_change=_mark_set)
-    if not st.session_state[set_key]:
-        st.markdown('<div class="sb-slide-hint">Drag the slider to set a value</div>', unsafe_allow_html=True)
-        return None
-    return value
+def _choice_to_count(choice):
+    return None if choice is None else int(str(choice).rstrip("+"))
+
+
+def _answers(d):
+    """Model inputs from the saved answers (None where not answered yet)."""
+    hist_unknown = d.get("hist_unknown", False)
+    income_unknown = d.get("income_unknown", False)
+    return {
+        "utilization_pct": d.get("util"),
+        "d30": None if hist_unknown else _choice_to_count(d.get("d30")),
+        "d60": None if hist_unknown else _choice_to_count(d.get("d60")),
+        "d90": None if hist_unknown else _choice_to_count(d.get("d90")),
+        "monthly_income": None if income_unknown else d.get("income"),
+        "debt_ratio_pct": None if income_unknown else d.get("dti"),
+        "real_estate": _choice_to_count(d.get("re")),
+        "delinquency_unknown": hist_unknown,
+        "income_unknown": income_unknown,
+    }
+
+
+def _step_missing(step, d):
+    """Required answers still missing on a given step (empty list = step complete)."""
+    a = _answers(d)
+    if step == 0:
+        return [] if (d.get("name") or "").strip() else ["applicant's name"]
+    if step == 1:
+        return [] if a["utilization_pct"] is not None else ["credit utilisation"]
+    if step == 2:
+        if a["delinquency_unknown"]:
+            return []
+        return [lbl for lbl, k in (("30–59 days late", "d30"), ("60–89 days late", "d60"),
+                                   ("90+ days late", "d90")) if a[k] is None]
+    if step == 3:
+        missing = []
+        if not a["income_unknown"]:
+            if a["monthly_income"] is None:
+                missing.append("monthly income")
+            if a["debt_ratio_pct"] is None:
+                missing.append("debt-to-income")
+        if a["real_estate"] is None:
+            missing.append("property loans")
+        return missing
+    return []
+
+
+def _go(step):
+    st.session_state.step = step
+    st.session_state.step_error = None
+
+
+def _question(title, helper):
+    st.html(f'<div class="sb-q-title">{title}</div><div class="sb-q-help">{helper}</div>')
+
+
+def render_step(step, d):
+    """Draw one question screen. Answers are saved into app_data as they're typed, so they
+    survive moving back and forth between steps and feed the live score panel."""
+    if step == 0:
+        _question("Who is applying?", "Enter the applicant's full name as it should appear on the report.")
+        d["name"] = st.text_input("Full name *", value=d.get("name", ""), key="w_name",
+                                  placeholder="e.g. Jordan Blake", help=FH.HELP["name"])
+        st.html('<div class="sb-note">Only shown on the result page and the report — never used in '
+                'scoring and never sent to the AI.</div>')
+
+    elif step == 1:
+        _question("How much of their available credit is in use?",
+                  "Total card and credit-line balances as a share of their combined limits.")
+        d["util"] = st.number_input("Credit utilisation (%) *", min_value=0.0, value=d.get("util"), step=1.0,
+                                    format="%.0f", placeholder="e.g. 30", key="w_util", help=FH.HELP["utilisation"])
+
+    elif step == 2:
+        _question("Any late payments in the last two years?",
+                  "Tap how many times a payment was overdue in each range. Choose 0 if never.")
+        d["hist_unknown"] = st.toggle("Payment history isn't available", value=d.get("hist_unknown", False),
+                                      key="w_hist_unknown", help=FH.HELP["history_unavailable"])
+        if not d["hist_unknown"]:
+            d["d30"] = st.segmented_control("30–59 days late *", LATE_OPTIONS, default=d.get("d30"),
+                                            key="w_d30", help=FH.HELP["late_30_59"])
+            d["d60"] = st.segmented_control("60–89 days late *", LATE_OPTIONS, default=d.get("d60"),
+                                            key="w_d60", help=FH.HELP["late_60_89"])
+            d["d90"] = st.segmented_control("90 days or more late *", LATE_OPTIONS, default=d.get("d90"),
+                                            key="w_d90", help=FH.HELP["late_90"])
+
+    elif step == 3:
+        _question("Income and existing debt", "Monthly figures, before tax.")
+        d["income_unknown"] = st.toggle("Income wasn't declared", value=d.get("income_unknown", False),
+                                        key="w_income_unknown", help=FH.HELP["income_not_declared"])
+        if not d["income_unknown"]:
+            c1, c2 = st.columns(2)
+            d["income"] = c1.number_input("Monthly income *", min_value=0.0, value=d.get("income"), step=100.0,
+                                          format="%.0f", placeholder="e.g. 5000", key="w_income",
+                                          help=FH.HELP["income"])
+            d["dti"] = c2.number_input("Debt-to-income (%) *", min_value=0.0, value=d.get("dti"), step=1.0,
+                                       format="%.0f", placeholder="e.g. 30", key="w_dti", help=FH.HELP["dti"])
+        d["re"] = st.segmented_control("Property loans (mortgages, home-equity lines) *", PROPERTY_OPTIONS,
+                                       default=d.get("re"), key="w_re", help=FH.HELP["real_estate"])
+
+    else:
+        _question("Check the details", "Everything look right? Edit any section, or run the assessment.")
+        a = _answers(d)
+        late = ("Not available" if a["delinquency_unknown"] else
+                f"{d.get('d30')} × 30–59 days, {d.get('d60')} × 60–89 days, {d.get('d90')} × 90+ days")
+        income = ("Not declared" if a["income_unknown"] else
+                  f"{a['monthly_income']:,.0f} a month · debt-to-income {a['debt_ratio_pct']:.0f}%")
+        rows = [
+            (0, "Applicant", d.get("name", "")),
+            (1, "Credit utilisation", f"{a['utilization_pct']:.0f}%"),
+            (2, "Late payments", late),
+            (3, "Income & debt", f"{income} · property loans {d.get('re')}"),
+        ]
+        for target, label, value in rows:
+            c1, c2 = st.columns([0.82, 0.18], vertical_alignment="center")
+            c1.html(f'<div class="sb-review-row"><div class="sb-review-label">{label}</div>'
+                    f'<div class="sb-review-value">{value}</div></div>')
+            c2.button("Edit", key=f"edit_{target}", on_click=_go, args=(target,), use_container_width=True)
 
 
 def render_form_page():
     _, _, cutoffs = score_range_and_cutoffs()
+    d = _data()
+    step = st.session_state.setdefault("step", 0)
+    st.session_state.setdefault("step_error", None)
+
     form_col, live_col = st.columns([0.62, 0.38], gap="large")
-
+    assess_clicked = False
     with form_col, st.container(key="form_card"):
-        st.markdown("### New credit application")
-        st.caption("Fields marked * are required. Hover over the (?) icon next to any field "
-                   "to see what it means and how to work it out.")
+        st.html(comp.stepper_html(STEPS, step))
+        with st.container(key=f"step_body_{step}"):
+            render_step(step, d)
 
-        # --- 1. Applicant ---
-        with _section(1, "Applicant", "Who the application is for."):
-            ac1, ac2 = st.columns(2)
-            applicant_name = ac1.text_input("Applicant name *", key="applicant_name",
-                                            placeholder="e.g. Jordan Blake", help=FH.HELP["name"])
-            reference = ac2.text_input("Application reference", value=st.session_state.applicant_ref,
-                                       key="applicant_ref_input", help=FH.HELP["reference"])
-            st.markdown('<div class="sb-note">Used for the report only — not used in scoring '
-                        'and not sent to the AI.</div>', unsafe_allow_html=True)
+        if st.session_state.step_error:
+            st.html(f'<div class="sb-error-box"><b>Almost there:</b> {st.session_state.step_error}</div>')
 
-        # --- 2. Credit usage ---
-        with _section(2, "Credit usage", "How much of the available revolving credit is being used."):
-            utilization_pct = _slider_field("Credit utilisation *", "f_util", 150, FH.HELP["utilisation"])
+        st.html('<div style="height:.6rem"></div>')
+        back_col, next_col = st.columns(2)
+        if step > 0:
+            back_col.button("← Back", on_click=_go, args=(step - 1,), use_container_width=True, key="nav_back")
+        if step < len(STEPS) - 1:
+            if next_col.button("Continue →", type="primary", use_container_width=True, key="nav_next"):
+                missing = _step_missing(step, d)
+                if missing:
+                    st.session_state.step_error = "please fill in " + ", ".join(missing) + "."
+                else:
+                    _go(step + 1)
+                st.rerun()
+        else:
+            assess_clicked = next_col.button("Assess application", type="primary",
+                                              use_container_width=True, key="nav_assess")
 
-        # --- 3. Payment history ---
-        with _section(3, "Payment history", "Late payments in the last two years. Tap a number for each."):
-            delinquency_unknown = st.toggle("Payment history unavailable", key="f_hist_unknown",
-                                            help=FH.HELP["history_unavailable"])
-            d30 = d60 = d90 = None
-            if not delinquency_unknown:
-                d30 = _count(st.segmented_control("Payments 30–59 days late *", LATE_OPTIONS, key="f_d30",
-                                                  help=FH.HELP["late_30_59"]))
-                d60 = _count(st.segmented_control("Payments 60–89 days late *", LATE_OPTIONS, key="f_d60",
-                                                  help=FH.HELP["late_60_89"]))
-                d90 = _count(st.segmented_control("Payments 90+ days late *", LATE_OPTIONS, key="f_d90",
-                                                  help=FH.HELP["late_90"]))
-
-        # --- 4. Income and debt ---
-        with _section(4, "Income and debt", "Monthly income and existing debt obligations."):
-            income_unknown = st.toggle("Income not declared", key="f_income_unknown",
-                                       help=FH.HELP["income_not_declared"])
-            monthly_income = debt_ratio_pct = None
-            if not income_unknown:
-                ic1, ic2 = st.columns(2)
-                monthly_income = ic1.number_input(
-                    "Monthly income, before tax *", min_value=0.0, value=None, step=100.0, format="%.0f",
-                    placeholder="e.g. 5000", help=FH.HELP["income"], key="f_income",
-                )
-                with ic2:
-                    debt_ratio_pct = _slider_field("Debt-to-income *", "f_dti", 150, FH.HELP["dti"])
-            real_estate = _count(st.segmented_control(
-                "Property loans (mortgages, home-equity lines) *", PROPERTY_OPTIONS, key="f_re",
-                help=FH.HELP["real_estate"]))
-
-        st.html("<br>")
-        assess_clicked = st.button("Assess application", type="primary", use_container_width=True)
-        error_slot = st.empty()
-
-    # ---- what's answered so far (drives the live panel and validation) ----
+    # ---- live score panel ----
+    a = _answers(d)
     progress = [
-        ("Applicant name", bool(applicant_name.strip())),
-        ("Credit utilisation", utilization_pct is not None),
-        ("Payment history", delinquency_unknown or None not in (d30, d60, d90)),
-        ("Income and debt-to-income", income_unknown or None not in (monthly_income, debt_ratio_pct)),
-        ("Property loans", real_estate is not None),
+        ("Applicant", not _step_missing(0, d)),
+        ("Credit usage", not _step_missing(1, d)),
+        ("Payment history", not _step_missing(2, d)),
+        ("Income & debt", not _step_missing(3, d)),
     ]
-    scoring_ready = all(done for label, done in progress if label != "Applicant name")
-
     preview = None
-    if scoring_ready:
-        row = build_row(utilization_pct, d30, d60, d90, monthly_income, debt_ratio_pct, real_estate,
-                        delinquency_unknown, income_unknown)
+    if all(done for label, done in progress[1:]):
+        row = build_row(**a)
         decision, _, _, _ = quick_score(row)
         preview = {"score": float(decision["score"]), "band": decision["band"],
                    "decision": decision["final_decision"], "flags": decision["triggered_rules"],
@@ -237,29 +319,19 @@ def render_form_page():
         st.html(comp.live_panel_html(progress, preview, cutoffs))
 
     if assess_clicked:
-        required = {
-            "Applicant name": applicant_name.strip() or None,
-            "Credit utilisation": utilization_pct,
-            "Property loans": real_estate,
-        }
-        if not delinquency_unknown:
-            required.update({"30–59 days late": d30, "60–89 days late": d60, "90+ days late": d90})
-        if not income_unknown:
-            required.update({"Monthly income": monthly_income, "Debt-to-income": debt_ratio_pct})
-        missing = [label for label, value in required.items() if value is None]
-        if missing:
-            error_slot.markdown(
-                '<div class="sb-error-box"><b>Fill in the required fields to continue:</b> '
-                + ", ".join(missing) + ".</div>", unsafe_allow_html=True)
-            return
+        incomplete = [s for s in range(4) if _step_missing(s, d)]
+        if incomplete:
+            _go(incomplete[0])
+            st.session_state.step_error = "a few answers are still missing on this step."
+            st.rerun()
 
-        st.session_state.applicant_ref = reference
+        reference = st.session_state.applicant_ref   # internal file number, generated automatically
+        applicant_name = d["name"].strip()
         applicant_id = "live_applicant"
-        row = build_row(utilization_pct, d30, d60, d90, monthly_income, debt_ratio_pct, real_estate,
-                        delinquency_unknown, income_unknown, applicant_id)
+        row = build_row(applicant_id=applicant_id, **a)
         # `row` above is the ONLY applicant data passed to scoring and decisioning.
         # The applicant's name never leaves the app; the memo only receives the
-        # random application reference so the memo can be filed against it.
+        # random file reference so the memo can be filed against it.
         applicant_df = pd.DataFrame([row])
 
         bin_labels, points_df, scores, base_points = score_applicants(applicant_df, transformer, features_b, points_table)
@@ -282,6 +354,7 @@ def render_form_page():
             "base_points": int(base_points), "characteristic_rows": char_rows,
             "score_range_cutoffs": score_range_and_cutoffs(),
             "generated_at": datetime.now().strftime("%d %b %Y, %H:%M"),
+            "economics": portfolio_view(),
             "pdf_bytes": None,
         }
         st.session_state.page = "result"
@@ -364,11 +437,19 @@ def render_result_page():
         render_what_if(a, cutoffs)
         st.html("<br>")
         st.html(comp.drawer_html(a["characteristic_rows"], a["base_points"], decision["score"]))
+        eco = a.get("economics")
+        band_eco = next((r for r in (eco or {}).get("bands", []) if r["band"] == decision["band"]), None)
+        if band_eco:
+            st.html(f'<div class="sb-eco-note"><b>Expected loss for band {decision["band"]}:</b> about '
+                    f'{band_eco["el_per_1000"]:.0f} for every {eco["per_amount"]:,} lent '
+                    f'({band_eco["pd"]:.1%} default rate × {eco["lgd"]:.0%} lost on default). '
+                    f'The PDF report shows how each approval cut-off would change this.</div>')
 
         st.html("<br>")
         with st.expander("Read the credit memo"):
             st.caption(a["memo_mode"])
-            st.markdown(a["memo"])
+            with st.container(key="memo_text"):
+                st.markdown(a["memo"])
 
         st.html("<br>")
         if a["pdf_bytes"] is None:
@@ -378,26 +459,34 @@ def render_result_page():
         with bcol1:
             st.download_button(
                 "Download full report (PDF)", data=a["pdf_bytes"],
-                file_name=f"sample_bank_credit_report_{a['reference']}.pdf",
+                file_name=f"{_report_filename(a.get('applicant_name', ''))}",
                 mime="application/pdf", type="primary", use_container_width=True,
             )
         with bcol2:
             if st.button("Assess another application", use_container_width=True):
                 st.session_state.page = "form"
                 st.session_state.assessment = None
-                st.session_state.applicant_ref = f"SB-{datetime.now().year}-{random.randint(0, 9999):04d}"
+                st.session_state.applicant_ref = f"CR-{datetime.now().year}-{random.randint(0, 9999):04d}"
                 # start the next application with a clean form
                 for k in list(st.session_state.keys()):
-                    if k.startswith("f_") or k in ("applicant_name", "applicant_ref_input"):
+                    if k.startswith(("f_", "w_", "wi_")) or k in ("app_data", "step", "step_error"):
                         del st.session_state[k]
                 st.rerun()
+
+
+def _report_filename(name: str) -> str:
+    """'Priya Sharma' -> 'Priya Sharma Credit Report.pdf' (characters Windows
+    won't allow in file names are removed)."""
+    clean = re.sub(r'[\\/:*?"<>|]+', "", (name or "").strip())
+    clean = re.sub(r"\s+", " ", clean).strip(" .")
+    return f"{clean or 'Applicant'} Credit Report.pdf"
 
 
 # ============================= ABOUT THE MODEL PAGE =============================
 def render_about_page():
     with st.container(key="about_wrap"):
         st.markdown("## About the model")
-        st.caption("How Sample Bank's credit scorecard works, how it performs, and the policies behind each decision.")
+        st.caption("How the credit scorecard works, how it performs, and the policies behind each decision.")
 
         tab1, tab2, tab3 = st.tabs(["Performance", "Scorecard points", "Policy documents"])
 
@@ -415,6 +504,32 @@ def render_about_page():
                 comparison_df = load_model_comparison()
             st.dataframe(comparison_df.style.format({"AUC": "{:.4f}", "Gini": "{:.4f}", "KS": "{:.4f}"}),
                         use_container_width=True)
+
+            st.markdown("#### Choosing the cut-off")
+            eco = portfolio_view()
+            st.caption(f"Measured on {eco['n_test']:,} test applicants. Expected loss = default rate × "
+                       f"{eco['lgd']:.0%} loss given default (assumed) × amount lent, quoted per "
+                       f"{eco['per_amount']:,} lent over two years.")
+            cut_df = pd.DataFrame(eco["cutoffs"])
+            cut_df = cut_df.assign(min_score=cut_df["min_score"].map(
+                lambda v: "no floor" if v is None or v != v else f"{v:.0f}"))
+            st.dataframe(
+                cut_df[["policy", "min_score", "approval_rate", "bad_rate", "bads_avoided",
+                        "goods_declined", "el_per_1000"]].rename(columns={
+                    "policy": "Approval policy", "min_score": "Lowest score approved",
+                    "approval_rate": "Share approved", "bad_rate": "Default rate of approved",
+                    "bads_avoided": "Defaulters kept out", "goods_declined": "Good applicants turned away",
+                    "el_per_1000": f"Expected loss per {eco['per_amount']:,}"}).style.format({
+                    "Share approved": "{:.0%}", "Default rate of approved": "{:.1%}",
+                    "Defaulters kept out": "{:.0%}", "Good applicants turned away": "{:.0%}",
+                    f"Expected loss per {eco['per_amount']:,}": "{:.1f}"}),
+                use_container_width=True, hide_index=True)
+            band_df = pd.DataFrame(eco["bands"])[["band", "decision", "share", "pd", "el_per_1000"]].rename(columns={
+                "band": "Band", "decision": "Standard decision", "share": "Share of applicants",
+                "pd": "Default rate", "el_per_1000": f"Expected loss per {eco['per_amount']:,} lent"})
+            st.dataframe(band_df.style.format({"Share of applicants": "{:.1%}", "Default rate": "{:.1%}",
+                                               f"Expected loss per {eco['per_amount']:,} lent": "{:.1f}"}),
+                         use_container_width=True, hide_index=True)
 
             st.markdown("#### Charts")
             chart_files = [

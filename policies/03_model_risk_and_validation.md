@@ -1,8 +1,7 @@
-# Sample Bank — Model Risk and Validation Standards
+# Model Risk and Validation Standards
 
-> **FICTIONAL / ILLUSTRATIVE DOCUMENT.** "Sample Bank" is not a real
-> institution. Written for a personal portfolio project demonstrating credit
-> scorecard model governance; not a real bank's model risk policy.
+> **Illustrative document.** Written to demonstrate credit scorecard model
+> governance; not any real bank's model risk policy.
 
 ## 1. Purpose
 

@@ -79,6 +79,10 @@ class ReportPDF(FPDF):
         self.add_font("Lora", "I", f"{FONT_DIR}/Lora-Italic.ttf")
         self.add_font("PublicSans", "", f"{FONT_DIR}/PublicSans-Regular.ttf")
         self.add_font("PublicSans", "B", f"{FONT_DIR}/PublicSans-SemiBold.ttf")
+        # softer, rounder face for the credit memo body text
+        self.add_font("Nunito", "", f"{FONT_DIR}/NunitoSans-Regular.ttf")
+        self.add_font("Nunito", "B", f"{FONT_DIR}/NunitoSans-SemiBold.ttf")
+        self.add_font("Nunito", "I", f"{FONT_DIR}/NunitoSans-Italic.ttf")
         self.alias_nb_pages()
         self.set_font("PublicSans", "", 10)
 
@@ -93,11 +97,11 @@ class ReportPDF(FPDF):
         self.set_xy(self.l_margin, 3.2)
         self.set_font("Lora", "B", 9.5)
         self.set_text_color(*WHITE)
-        self.cell(60, 5, "Sample Bank")
+        self.cell(90, 5, "Credit Assessment Report")
         self.set_font("PublicSans", "", 8)
         self.set_text_color(*TOPBAR_SUB)
         self.set_xy(self.w - self.r_margin - 90, 3.2)
-        self.cell(90, 5, f"Credit assessment report  ·  {self.reference}", align="R")
+        self.cell(90, 5, f"Application {self.reference}", align="R")
         self.set_y(20)
 
     def footer(self):
@@ -108,7 +112,7 @@ class ReportPDF(FPDF):
         self.set_y(-12)
         self.set_font("PublicSans", "", 7.5)
         self.set_text_color(*MUTED)
-        self.cell(0, 6, f"Sample Bank  ·  Retail credit  ·  Confidential — for internal credit use"
+        self.cell(0, 6, f"Retail credit  ·  Confidential — for internal credit use"
                         f"  ·  Page {self.page_no()} of {{nb}}", align="C")
 
 
@@ -215,6 +219,373 @@ def section_title(pdf, text, x=None, y=None, size=12.5):
     pdf.set_xy(sx, sy + 10)
 
 
+# ----------------------------------------------------------------- memo typography
+MEMO_INK = hex_to_rgb("#3B4D51")   # a touch lighter than the main ink, easier on the eye
+
+MEMO_TAG_STYLES = {
+    "h1": TextStyle(font_family="Lora", font_style="B", font_size_pt=13, color=LEDGER, t_margin=4, b_margin=0),
+    "h2": TextStyle(font_family="Lora", font_style="B", font_size_pt=12, color=LEDGER, t_margin=4, b_margin=0),
+    "h3": TextStyle(font_family="Lora", font_style="B", font_size_pt=11, color=LEDGER, t_margin=3, b_margin=0),
+    "p": TextStyle(font_family="Nunito", font_size_pt=10, color=MEMO_INK, t_margin=1.2, b_margin=1.2),
+    "ul": TextStyle(t_margin=1, b_margin=1),
+    "ol": TextStyle(t_margin=1, b_margin=1),
+    "li": TextStyle(font_family="Nunito", font_size_pt=10, color=MEMO_INK, l_margin=5, t_margin=0.6),
+    "b": FontFace(family="Nunito", emphasis="BOLD", color=INK),
+    "strong": FontFace(family="Nunito", emphasis="BOLD", color=INK),
+    "i": FontFace(family="Nunito", emphasis="ITALICS", color=MEMO_INK),
+    "em": FontFace(family="Nunito", emphasis="ITALICS", color=MEMO_INK),
+}
+
+
+def _memo_html(md: str) -> str:
+    html = markdown.markdown(md, extensions=["tables"])
+    html = _strip_formatting_in_table_cells(html)
+    html = re.sub(r">\s*\n\s*<", "><", html)   # stray newlines between tags render as blank lines
+    return re.sub(r"<(p|ul|ol)>", r'<\1 style="line-height:1.55">', html)
+
+
+def _write_memo_html(pdf, html: str):
+    pdf.set_font("Nunito", "", 10)
+    pdf.set_text_color(*MEMO_INK)
+    pdf.set_fill_color(*LEDGER_TINT)
+    pdf.set_draw_color(*RULE)
+    pdf.set_line_width(0.2)
+    pdf.write_html(html, table_line_separators=True, li_prefix_color=BRASS, tag_styles=MEMO_TAG_STYLES)
+
+
+def _measure(html: str, reference: str) -> float:
+    """Height (mm) a block of memo HTML takes, measured on a scratch page."""
+    scratch = ReportPDF(reference)
+    scratch.add_page()
+    scratch.set_y(40)
+    _write_memo_html(scratch, html)
+    if scratch.page > 1:
+        return float("inf")
+    return scratch.get_y() - 40
+
+
+def render_memo(pdf, memo_md: str, reference: str):
+    """Writes the memo section by section; a section that won't fit on the current
+    page starts on the next one, so a heading is never separated from its content."""
+    parts = re.split(r"(?m)^(?=#{1,3}\s)", memo_md.strip())
+    for part in parts:
+        if not part.strip():
+            continue
+        html = _memo_html(part)
+        needed = _measure(html, reference)
+        room = pdf.page_break_trigger - pdf.get_y()
+        if needed > room and needed != float("inf"):
+            pdf.add_page()
+        elif needed == float("inf") and room < 60:
+            pdf.add_page()   # very long section: at least start it near the top of a page
+        _write_memo_html(pdf, html)
+
+
+# ----------------------------------------------------------------- business view
+def _pct(x, digits=1):
+    return "–" if x is None or x != x else f"{x * 100:.{digits}f}%"
+
+
+def _table_header(pdf, cols, y):
+    """cols: list of (title, width, align). Draws a muted header row with a rule under it."""
+    L = pdf.l_margin
+    pdf.set_font("PublicSans", "B", 7.4)
+    pdf.set_text_color(*MUTED)
+    x = L
+    for title, w, align in cols:
+        pdf.set_xy(x + 1.5, y)
+        pdf.multi_cell(w - 3, 3.6, title, align=align)
+        x += w
+    pdf.set_font("PublicSans", "B", 7.4)
+    n_lines = max(len(pdf.multi_cell(w - 3, 3.6, t, dry_run=True, output="LINES")) for t, w, _ in cols)
+    y_end = y + n_lines * 3.6 + 1.2
+    pdf.set_draw_color(*RULE)
+    pdf.set_line_width(0.3)
+    pdf.line(L, y_end, L + sum(c[1] for c in cols), y_end)
+    return y_end
+
+
+def render_business_page(pdf, assessment):
+    eco = assessment.get("economics")
+    if not eco:
+        return
+    L, W = pdf.l_margin, pdf.w - pdf.l_margin - pdf.r_margin
+    band = assessment["decision"]["band"]
+    per = eco["per_amount"]
+    lgd = eco["lgd"]
+    bands = {r["band"]: r for r in eco["bands"]}
+    cuts = eco["cutoffs"]
+
+    pdf.add_page()
+    pdf.set_y(pdf.get_y() + 2)
+    section_title(pdf, "Choosing the cut-off", L, pdf.get_y(), size=14)
+    pdf.set_xy(L, pdf.get_y() + 1)
+    pdf.set_font("Nunito", "", 9.2)
+    pdf.set_text_color(*MEMO_INK)
+    pdf.multi_cell(W, 4.8,
+        f"Where the bank draws the approval line decides how much business it writes and how much it "
+        f"loses. These figures come from {eco['n_test']:,} past applicants the model never saw while it was "
+        f"built; {_pct(eco['portfolio_bad_rate'])} of them went on to default.", align="L")
+
+    # --- this applicant callout ---
+    me = bands.get(band)
+    if me:
+        y = pdf.get_y() + 4
+        rounded(pdf, L, y, W, 17, LEDGER_TINT, radius=3)
+        rounded(pdf, L + 5, y + 4.2, 9, 9, DIAL[band], radius=2.5)
+        pdf.set_xy(L + 5, y + 4.2)
+        pdf.set_font("Lora", "B", 12)
+        pdf.set_text_color(*WHITE)
+        pdf.cell(9, 9, band, align="C")
+        pdf.set_xy(L + 18, y + 3.4)
+        pdf.set_font("Lora", "B", 10.5)
+        pdf.set_text_color(*LEDGER)
+        pdf.cell(0, 5, f"This applicant sits in band {band}: expected loss of about "
+                       f"{me['el_per_1000']:.0f} for every {per:,} lent")
+        pdf.set_xy(L + 18, y + 9.2)
+        pdf.set_font("Nunito", "", 8.6)
+        pdf.set_text_color(*MEMO_INK)
+        pdf.cell(0, 4.5, f"Band {band} default rate {_pct(me['pd'])}  ×  {lgd:.0%} of the balance lost on default"
+                         f"  ×  {per:,} lent  =  {me['el_per_1000']:.1f}")
+        pdf.set_y(y + 17)
+
+    # --- cut-off trade-off table ---
+    pdf.set_y(pdf.get_y() + 7)
+    pdf.set_font("Lora", "B", 11)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 6, "What each approval line would mean")
+    cols = [("Approval policy", 50, "L"), ("Lowest score approved", 20, "R"), ("Share approved", 26, "L"),
+            ("Default rate of approved", 22, "R"), ("Defaulters kept out", 20, "R"),
+            ("Good applicants turned away", 22, "R"), (f"Expected loss per {per:,}", W - 160, "R")]
+    y = _table_header(pdf, cols, pdf.get_y() + 7)
+    row_h = 8.2
+    for r in cuts:
+        if r["current"]:
+            pdf.set_fill_color(*LEDGER_TINT)
+            pdf.rect(L, y, W, row_h, style="F")
+        x = L
+        cells = [
+            r["policy"].replace(" (current policy)", ""),
+            "no floor" if r["min_score"] is None or r["min_score"] != r["min_score"] else f"{r['min_score']:.0f}",
+            None,
+            _pct(r["bad_rate"]),
+            _pct(r["bads_avoided"], 0),
+            _pct(r["goods_declined"], 0),
+            f"{r['el_per_1000']:.1f}",
+        ]
+        for (title, w, align), text in zip(cols, cells):
+            if text is None:   # share approved: number + mini bar
+                pdf.set_xy(x + 1.5, y + 1.9)
+                pdf.set_font("PublicSans", "B" if r["current"] else "", 8.4)
+                pdf.set_text_color(*INK)
+                pdf.cell(11, 4.4, _pct(r["approval_rate"], 0))
+                bar(pdf, x + 13, y + 3.3, w - 15, 1.8, r["approval_rate"], LEDGER)
+            else:
+                pdf.set_xy(x + 1.5, y + 1.9)
+                pdf.set_font("PublicSans", "B" if r["current"] else "", 8.4)
+                pdf.set_text_color(*(LEDGER if r["current"] and align == "L" else INK))
+                pdf.cell(w - 3, 4.4, text, align=align)
+            x += w
+        if r["current"]:
+            pdf.set_font("PublicSans", "B", 8.4)
+            cx = L + 1.5 + pdf.get_string_width(cells[0]) + 2
+            pdf.set_font("PublicSans", "B", 6.4)
+            tw = pdf.get_string_width("CURRENT") + 3.6
+            rounded(pdf, cx, y + 2.2, tw, 3.8, LEDGER, radius=1.9)
+            pdf.set_text_color(*WHITE)
+            pdf.set_xy(cx, y + 2.2)
+            pdf.cell(tw, 3.8, "CURRENT", align="C")
+        pdf.set_draw_color(*RULE)
+        pdf.set_line_width(0.2)
+        pdf.line(L, y + row_h, L + W, y + row_h)
+        y += row_h
+
+    # takeaway sentence, built from the numbers
+    cur = next((r for r in cuts if r["current"]), None)
+    tighter = next((r for r in cuts if r["lowest_band"] == "B"), None)
+    looser = next((r for r in cuts if r["lowest_band"] == "D"), None)
+    if cur and tighter and looser:
+        text = (f"Tightening the line from band C to band B would cut the default rate of the approved book from "
+                f"{_pct(cur['bad_rate'])} to {_pct(tighter['bad_rate'])}, but approve "
+                f"{(cur['approval_rate'] - tighter['approval_rate']) * 100:.0f} fewer applicants in every 100. "
+                f"Loosening it to band D would approve {(looser['approval_rate'] - cur['approval_rate']) * 100:.0f} "
+                f"more in every 100 and raise the default rate to {_pct(looser['bad_rate'])}.")
+        pdf.set_xy(L, y + 3)
+        pdf.set_font("Nunito", "I", 8.8)
+        pdf.set_text_color(*MEMO_INK)
+        pdf.multi_cell(W, 4.6, text, align="L")
+        y = pdf.get_y()
+
+    # --- expected loss by band ---
+    pdf.set_xy(L, y + 7)
+    pdf.set_font("Lora", "B", 11)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 6, "Expected loss by risk band")
+    cols2 = [("Band", 16, "L"), ("Standard decision", 46, "L"), ("Share of applicants", 26, "R"),
+             ("Default rate", 24, "R"), (f"Expected loss per {per:,} lent", W - 112, "L")]
+    y = _table_header(pdf, cols2, pdf.get_y() + 7)
+    max_el = max((r["el_per_1000"] for r in eco["bands"] if r["el_per_1000"] == r["el_per_1000"]), default=1) or 1
+    for r in eco["bands"]:
+        mine = r["band"] == band
+        if mine:
+            pdf.set_fill_color(*LEDGER_TINT)
+            pdf.rect(L, y, W, row_h, style="F")
+        rounded(pdf, L + 1.5, y + 1.6, 7, 5, DIAL[r["band"]], radius=1.5)
+        pdf.set_xy(L + 1.5, y + 1.6)
+        pdf.set_font("PublicSans", "B", 8)
+        pdf.set_text_color(*WHITE)
+        pdf.cell(7, 5, r["band"], align="C")
+        pdf.set_font("PublicSans", "B" if mine else "", 8.4)
+        pdf.set_text_color(*INK)
+        pdf.set_xy(L + 16 + 1.5, y + 1.9)
+        pdf.cell(43, 4.4, r["decision"] + ("  ·  this applicant" if mine else ""))
+        pdf.set_xy(L + 62 + 1.5, y + 1.9)
+        pdf.cell(23, 4.4, _pct(r["share"]), align="R")
+        pdf.set_xy(L + 88 + 1.5, y + 1.9)
+        pdf.cell(21, 4.4, _pct(r["pd"]), align="R")
+        el = r["el_per_1000"]
+        if el == el:
+            bx = L + 112 + 1.5
+            bw = W - 112 - 18
+            bar(pdf, bx, y + 3.2, bw, 2, el / max_el, DIAL[r["band"]])
+            pdf.set_xy(bx + bw + 1, y + 1.9)
+            pdf.cell(14, 4.4, f"{el:.1f}", align="R")
+        pdf.set_draw_color(*RULE)
+        pdf.set_line_width(0.2)
+        pdf.line(L, y + row_h, L + W, y + row_h)
+        y += row_h
+
+    # --- assumptions ---
+    note = (f"Expected loss = probability of default × loss given default × exposure at default. "
+            f"Probability of default is each band's observed rate of going 90+ days past due within two years, "
+            f"so these are two-year losses, not annual ones. Loss given default is assumed at {lgd:.0%} — a common "
+            f"benchmark for unsecured consumer lending — and exposure is assumed to equal the amount lent. "
+            f"Band D files go to an underwriter, so the true outcome of an A–D policy depends on how many "
+            f"of them are approved after review.")
+    pdf.set_font("Nunito", "", 8.2)
+    lines = pdf.multi_cell(W - 14, 4.3, note, dry_run=True, output="LINES", align="L")
+    h = len(lines) * 4.3 + 14
+    y += 7
+    if y + h > pdf.page_break_trigger:
+        pdf.add_page()
+        y = pdf.get_y()
+    rounded(pdf, L, y, W, h, BRASS_TINT, radius=3)
+    pdf.set_xy(L + 7, y + 3.6)
+    pdf.set_font("Lora", "B", 9.8)
+    pdf.set_text_color(*hex_to_rgb("#7A5A1C"))
+    pdf.cell(0, 5, "How these figures are worked out")
+    pdf.set_xy(L + 7, y + 9.6)
+    pdf.set_font("Nunito", "", 8.2)
+    pdf.set_text_color(*MEMO_INK)
+    pdf.multi_cell(W - 14, 4.3, note, align="L")
+
+
+# ----------------------------------------------------------------- glossary
+GLOSSARY = [
+    ("Credit utilisation",
+     "How much of the available credit on cards and personal credit lines is being used.",
+     "Total balances ÷ total credit limits × 100. Balances of 15,000 on limits of 50,000 = 30%. "
+     "Mortgages and fixed loans are not included. Above 100% means accounts are over their limit."),
+    ("Debt-to-income ratio",
+     "The share of monthly income already committed to debt payments and other fixed obligations.",
+     "Monthly debt payments ÷ gross monthly income × 100. Payments of 1,500 on income of 5,000 = 30%. "
+     "Above 50% triggers an affordability check."),
+    ("Monthly income",
+     "Total income before tax from all sources — salary, business, rent received, pension.",
+     "An annual salary of 60,000 = 5,000 a month."),
+    ("Late payments",
+     "How many times in the last two years a payment was overdue, counted in three ranges: "
+     "30–59 days, 60–89 days and 90 days or more.",
+     "Each occasion is counted once, in the most serious range it reached. 90+ days late is treated "
+     "as serious delinquency."),
+    ("Property loans",
+     "Mortgages and other loans secured on property, including home-equity lines of credit.",
+     "A count of open loans. In this scorecard, holding one or two earns more points than holding "
+     "none, because it usually reflects an established credit history."),
+    ("Scorecard points",
+     "Each characteristic earns points; the score is base points plus the points from every "
+     "characteristic. Higher means lower risk.",
+     "The scale is set so that 600 points means odds of 50 good accounts to every 1 that defaults, "
+     "and every extra 20 points doubles those odds."),
+    ("Risk band",
+     "The score grouped into five grades, A (lowest risk) to E (highest). Each band maps to a "
+     "standard decision and an expected range of default rates.",
+     None),
+    ("Probability of default",
+     "The chance the applicant falls 90 or more days behind on a payment within the next two years.",
+     None),
+    ("Reason codes",
+     "The characteristics that cost the most points compared with the best possible answer. "
+     "They explain the score and are used in any adverse-action notice.",
+     None),
+    ("Hard policy rules",
+     "Checks that apply whatever the score: serious past delinquency, utilisation above 100%, "
+     "debt-to-income above 50%, or undeclared income send the file to an underwriter. Missing "
+     "payment history sends it to manual review.",
+     None),
+    ("Gini, AUC and KS",
+     "Standard measures of how well the model separates applicants who repay from those who "
+     "default, measured on data the model never saw while it was built.",
+     "AUC runs from 0.5 (no better than chance) to 1.0 (perfect); Gini = 2 × AUC − 1. KS is the "
+     "largest gap between the score distributions of good and bad accounts."),
+]
+
+
+def _glossary_entry(pdf, term, meaning, how, dry=False):
+    """Draws one glossary row (or just measures it when dry=True). Returns its height."""
+    L, W = pdf.l_margin, pdf.w - pdf.l_margin - pdf.r_margin
+    TERM_W, GAP = 46, 5
+    text_w = W - TERM_W - GAP
+    pdf.set_font("Nunito", "", 9)
+    h1 = len(pdf.multi_cell(text_w, 4.6, meaning, dry_run=True, output="LINES", align="L")) * 4.6
+    h2 = 0
+    if how:
+        pdf.set_font("Nunito", "", 8.3)
+        h2 = len(pdf.multi_cell(text_w, 4.3, how, dry_run=True, output="LINES", align="L")) * 4.3 + 1.2
+    h = max(h1 + h2, 5) + 5.5
+    if dry:
+        return h
+    y = pdf.get_y()
+    pdf.set_xy(L, y + 2.4)
+    pdf.set_font("Lora", "B", 9.8)
+    pdf.set_text_color(*LEDGER)
+    pdf.multi_cell(TERM_W, 4.6, term, align="L")
+    pdf.set_xy(L + TERM_W + GAP, y + 2.4)
+    pdf.set_font("Nunito", "", 9)
+    pdf.set_text_color(*MEMO_INK)
+    pdf.multi_cell(text_w, 4.6, meaning, align="L")
+    if how:
+        pdf.set_xy(L + TERM_W + GAP, pdf.get_y() + 1.2)
+        pdf.set_font("Nunito", "I", 8.3)
+        pdf.set_text_color(*MUTED)
+        pdf.multi_cell(text_w, 4.3, how, align="L")
+    pdf.set_draw_color(*RULE)
+    pdf.set_line_width(0.2)
+    pdf.line(L, y + h, L + W, y + h)
+    pdf.set_y(y + h)
+    return h
+
+
+def render_glossary(pdf):
+    L, W = pdf.l_margin, pdf.w - pdf.l_margin - pdf.r_margin
+    pdf.add_page()   # the glossary always gets its own page
+    pdf.set_y(pdf.get_y() + 2)
+    section_title(pdf, "What the measures mean", L, pdf.get_y(), size=14)
+    pdf.set_xy(L, pdf.get_y() + 1)
+    pdf.set_font("Nunito", "I", 8.8)
+    pdf.set_text_color(*MUTED)
+    pdf.cell(0, 4.5, "For information — plain-language definitions of the terms used in this report.")
+    pdf.set_y(pdf.get_y() + 7)
+    pdf.set_draw_color(*RULE)
+    pdf.set_line_width(0.2)
+    pdf.line(L, pdf.get_y(), L + W, pdf.get_y())
+    for entry in GLOSSARY:
+        if pdf.get_y() + _glossary_entry(pdf, *entry, dry=True) > pdf.page_break_trigger:
+            pdf.add_page()
+            pdf.set_y(pdf.get_y() + 2)
+        _glossary_entry(pdf, *entry)
+
+
 # ----------------------------------------------------------------- the report
 def build_pdf_report(assessment: dict) -> bytes:
     decision = assessment["decision"]
@@ -241,11 +612,11 @@ def build_pdf_report(assessment: dict) -> bytes:
     pdf.set_xy(L, 8.5)
     pdf.set_font("Lora", "B", 18)
     pdf.set_text_color(*WHITE)
-    pdf.cell(100, 8, "Sample Bank")
+    pdf.cell(100, 8, "Credit Assessment Report")
     pdf.set_xy(L, 17)
     pdf.set_font("PublicSans", "", 9.5)
     pdf.set_text_color(*TOPBAR_SUB)
-    pdf.cell(100, 5, "Credit assessment report")
+    pdf.cell(100, 5, "Retail credit decisioning")
     pdf.set_font("PublicSans", "B", 9)
     pdf.set_text_color(*WHITE)
     pdf.set_xy(pdf.w - pdf.r_margin - 90, 9.5)
@@ -467,30 +838,7 @@ def build_pdf_report(assessment: dict) -> bytes:
     pdf.ln(9)
 
     memo_md = re.sub(r"\A\s*#\s+[^\n]*\n", "", assessment["memo"])  # the page already titles it
-    memo_html = markdown.markdown(memo_md, extensions=["tables"])
-    memo_html = _strip_formatting_in_table_cells(memo_html)
-    memo_html = re.sub(r"<(p|ul|ol)>", r'<\1 style="line-height:1.5">', memo_html)
-    pdf.set_font("Lora", "", 10)
-    pdf.set_text_color(*INK)
-    pdf.set_fill_color(*LEDGER_TINT)
-    pdf.set_draw_color(*RULE)
-    pdf.set_line_width(0.2)
-    pdf.write_html(
-        memo_html,
-        table_line_separators=True,
-        li_prefix_color=BRASS,
-        tag_styles={
-            "h1": TextStyle(font_family="Lora", font_style="B", font_size_pt=13, color=LEDGER, t_margin=5, b_margin=2),
-            "h2": TextStyle(font_family="Lora", font_style="B", font_size_pt=12, color=LEDGER, t_margin=5, b_margin=1.5),
-            "h3": TextStyle(font_family="Lora", font_style="B", font_size_pt=11, color=LEDGER, t_margin=4, b_margin=1),
-            "p": TextStyle(font_family="Lora", font_size_pt=10, color=INK, t_margin=0, b_margin=2.5),
-            "li": FontFace(family="Lora", size_pt=10, color=INK),
-            "b": FontFace(family="Lora", emphasis="BOLD", color=INK),
-            "strong": FontFace(family="Lora", emphasis="BOLD", color=INK),
-            "i": FontFace(family="Lora", emphasis="ITALICS", color=INK),
-            "em": FontFace(family="Lora", emphasis="ITALICS", color=INK),
-        },
-    )
+    render_memo(pdf, memo_md, assessment["reference"])
 
     # ---------------- about this model ----------------
     pdf.ln(6)
@@ -514,5 +862,9 @@ def build_pdf_report(assessment: dict) -> bytes:
     pdf.set_font("PublicSans", "", 8.5)
     pdf.set_text_color(*INK)
     pdf.multi_cell(W - 14, 4.5, note)
+
+    # ---------------- business view, then glossary ----------------
+    render_business_page(pdf, assessment)
+    render_glossary(pdf)
 
     return bytes(pdf.output())

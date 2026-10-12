@@ -1,13 +1,11 @@
-# Sample Bank — Retail Credit Policy
+# Retail Credit Policy
 
-> **FICTIONAL / ILLUSTRATIVE DOCUMENT.** "Sample Bank" is not a real institution.
-> This document was written for a personal portfolio project demonstrating a
-> credit risk scorecard build. It is not a real bank policy and must not be
-> treated as one.
+> **Illustrative document.** Written to demonstrate a credit risk scorecard
+> build. It is not any real bank's policy and must not be treated as one.
 
 ## 1. Purpose and Scope
 
-This policy governs how Sample Bank's Retail Credit team uses the unsecured
+This policy governs how the bank's Retail Credit team uses the unsecured
 consumer credit scorecard to decide, condition, refer, or decline personal
 loan applications. It applies to all applications scored by the production
 scorecard described in Section 2.
@@ -93,7 +91,7 @@ than letting the system auto-decline. The reasoning is deliberate:
   applicants who are also flagged risky for other, well-evidenced reasons
   (e.g. very high utilization) — to the manual review queue instead of
   resolving them automatically, which costs underwriter time and slows down
-  the decision for those applicants. Sample Bank accepts this operational
+  the decision for those applicants. The bank accepts this operational
   cost as the price of not making a fully automated adverse decision on
   incomplete data.
 - Other triggered rules (R1–R4) and the band's own reasoning are still
