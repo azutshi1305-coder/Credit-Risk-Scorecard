@@ -89,6 +89,29 @@ held-out data -- the scorecard is calibrated, not just well-ranked.
   retriever, and per-claim targeted retrieval in the memo template instead
   of a broad merged chunk list.
 
+## The App
+
+The Streamlit app ("the underwriter's desk") is a two-step flow: a credit
+application form, and a separate result page showing a decision stamp,
+score/band tiles with a to-scale risk-band ruler, the top factors behind the
+decision, and a full PDF report (fonts embedded, no raw variable names or
+bin intervals -- everything is translated to plain language before it
+reaches the screen or the PDF). A second "About the model" page (reached via
+the top-bar navigation) holds performance metrics, the points table, and the
+policy documents.
+
+## Screens
+
+Automated screenshots weren't captured for this build -- a Playwright
+install was attempted (the environment has no pre-installed browser
+automation tool) but didn't complete over an unreliable network connection,
+and wasn't worth blocking the rest of the build on. The fastest way to see
+the app is to run it locally (see **How to Run It** below): the form page is
+a single white card with four numbered sections on the ledger-green top
+bar, and the result page shows the rotated decision stamp, the score/band
+tiles with the A-E risk ruler, and the "what helped / what held the score
+back" and "policy checks" columns beneath it.
+
 ## Example Credit Memos
 
 Two versions of the same applicant (id 104180, Band E, R5 triggered -- the
@@ -142,9 +165,18 @@ policies/                   Step 8a: fictional Sample Bank policy documents
 decision_engine.py          Step 8a: hard rules + band -> final decision
 policy_retriever.py         Step 8b: TF-IDF chunking and retrieval over policies/
 rag_memo.py                 Step 8b: credit memo generation (Claude or template fallback)
-app.py                      Step 9: Streamlit app
+app.py                      Step 9: Streamlit app (form + result + about-the-model pages)
+pdf_report.py                Step 9: PDF report (fpdf2, embedded Lora/Public Sans fonts)
+ui/                           Step 9: shared presentation layer
+  theme.py                     design tokens + injected CSS
+  view_model.py                 raw data -> plain-language content (used by app AND the PDF,
+                                 so a raw variable name/bin interval can never leak to a user)
+  components.py                  HTML builders for the Streamlit result page
+assets/fonts/                Step 9: embedded Lora + Public Sans TTFs (static instances)
+.streamlit/config.toml        Step 9: theme + minimal toolbar
 reports/figures/            Generated charts
 reports/example_memos/      Saved example memos (template + Claude)
+reports/screens/             App screenshots (if captured -- see Screens below)
 ```
 
 ## Limitations

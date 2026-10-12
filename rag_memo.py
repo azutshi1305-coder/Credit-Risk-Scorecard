@@ -123,8 +123,7 @@ def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
     client = anthropic.Anthropic(api_key=api_key)
 
     friendly_reasons = "\n".join(
-        f"- {friendly_reason(r['variable'], r['applicant_bin'])} "
-        f"(variable: {r['variable']}, bin: {r['applicant_bin']}, {r['points_lost']:.0f} points lost vs. best bin)"
+        f"- {friendly_reason(r['variable'], r['applicant_bin'])} ({r['points_lost']:.0f} points lost vs. best bin)"
         for r in reason_list
     )
     rules_text = "\n".join(f"- {rid}: {desc} (min. action: {action})" for rid, desc, action in decision["rule_details"]) or "None triggered"
@@ -138,6 +137,11 @@ def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
         "Every policy-based statement you make must cite the retrieved chunk it came from, in the form [1], [2], etc., "
         "matching the bracketed numbers given with each chunk. "
         "Never mention age, number of dependents, or any other protected characteristic, even to say they were excluded. "
+        "Never use internal system notation in the memo text: no raw scorecard variable names "
+        "(e.g. 'RevolvingUtilizationOfUnsecuredLines'), no bin notation or numeric intervals "
+        "(e.g. '(0.978, 50708.0]' or '1 | 2 | 3+'). Every characteristic must be described only in the "
+        "plain language already given to you below -- if you need to refer to a characteristic, use its "
+        "plain-language description, not a technical name or range. "
         "Keep the tone factual and suitable for an underwriter's file."
     )
     user_message = (
