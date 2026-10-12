@@ -41,39 +41,38 @@ def train_lightgbm(train: pd.DataFrame, target: str, features: list):
     return model
 
 
-if __name__ == "__main__":
-    pd.set_option("display.width", 140)
-    os.makedirs(FIG_DIR, exist_ok=True)
-
-    df = pd.read_csv("Data/cs-training-cleaned.csv", index_col=0)
-    train, test = split_train_test(df, TARGET, test_size=0.3, random_state=42)
-
+def compare_models(train: pd.DataFrame, test: pd.DataFrame, champion: dict, verbose: bool = True) -> dict:
+    """Train both LightGBM challengers, evaluate all three models (scorecard
+    champion, fair-lending LightGBM, all-features reference) on test, and
+    return everything needed to report or chart the comparison."""
     y_test = test[TARGET]
 
-    print("=== Training LightGBM challenger on ALL raw (non-WoE) features (includes age, NumberOfDependents) ===")
+    if verbose:
+        print("=== Training LightGBM challenger on ALL raw (non-WoE) features (includes age, NumberOfDependents) ===")
     model = train_lightgbm(train, TARGET, RAW_FEATURES)
-    print(f"Best iteration (early stopping): {model.best_iteration_}")
+    if verbose:
+        print(f"Best iteration (early stopping): {model.best_iteration_}")
     X_test = test[RAW_FEATURES]
     pred_lgb = model.predict_proba(X_test)[:, 1]
     auc_lgb = roc_auc_score(y_test, pred_lgb)
     gini_lgb = 2 * auc_lgb - 1
     ks_lgb = ks_statistic(y_test.values, pred_lgb)
 
-    print("\n=== Training LightGBM fair-lending challenger (excludes age, NumberOfDependents) ===")
+    if verbose:
+        print("\n=== Training LightGBM fair-lending challenger (excludes age, NumberOfDependents) ===")
     model_fair = train_lightgbm(train, TARGET, FAIR_RAW_FEATURES)
-    print(f"Best iteration (early stopping): {model_fair.best_iteration_}")
+    if verbose:
+        print(f"Best iteration (early stopping): {model_fair.best_iteration_}")
     X_test_fair = test[FAIR_RAW_FEATURES]
     pred_lgb_fair = model_fair.predict_proba(X_test_fair)[:, 1]
     auc_lgb_fair = roc_auc_score(y_test, pred_lgb_fair)
     gini_lgb_fair = 2 * auc_lgb_fair - 1
     ks_lgb_fair = ks_statistic(y_test.values, pred_lgb_fair)
 
-    champion = run_pipeline(verbose=False)
     pred_champ = predict_proba_bad(champion["model_b"], champion["transformer"], test, champion["features_b"])
     auc_champ, gini_champ = champion["auc_b"], champion["gini_b"]
     ks_champ = ks_statistic(test[TARGET].values, pred_champ)
 
-    print("\n=== CHAMPION vs OFFICIAL CHALLENGER vs ALL-FEATURES REFERENCE (test set) ===")
     comparison = pd.DataFrame({
         "model": [
             "Scorecard (Model B, fair lending, WoE logistic regression) -- CHAMPION",
@@ -84,13 +83,22 @@ if __name__ == "__main__":
         "Gini": [gini_champ, gini_lgb_fair, gini_lgb],
         "KS": [ks_champ, ks_lgb_fair, ks_lgb],
     })
-    print(comparison.to_string(index=False))
-    print(f"\nOfficial challenger (fair-lending LightGBM) Gini advantage over scorecard: {gini_lgb_fair - gini_champ:+.4f} ({(gini_lgb_fair - gini_champ) / gini_champ:+.1%} relative)")
-    print(f"All-features LightGBM Gini advantage over scorecard: {gini_lgb - gini_champ:+.4f} ({(gini_lgb - gini_champ) / gini_champ:+.1%} relative) -- not usable, uses protected attributes")
-    print(f"LightGBM Gini COST of removing age & NumberOfDependents: {gini_lgb - gini_lgb_fair:.4f} ({(gini_lgb - gini_lgb_fair) / gini_lgb:.1%} relative drop)")
 
-    # ================= SHAP (official challenger = fair-lending LightGBM) =================
-    print("\n=== Computing SHAP values for the OFFICIAL CHALLENGER (fair-lending LightGBM) ===")
+    if verbose:
+        print("\n=== CHAMPION vs OFFICIAL CHALLENGER vs ALL-FEATURES REFERENCE (test set) ===")
+        print(comparison.to_string(index=False))
+        print(f"\nOfficial challenger (fair-lending LightGBM) Gini advantage over scorecard: {gini_lgb_fair - gini_champ:+.4f} ({(gini_lgb_fair - gini_champ) / gini_champ:+.1%} relative)")
+        print(f"All-features LightGBM Gini advantage over scorecard: {gini_lgb - gini_champ:+.4f} ({(gini_lgb - gini_champ) / gini_champ:+.1%} relative) -- not usable, uses protected attributes")
+        print(f"LightGBM Gini COST of removing age & NumberOfDependents: {gini_lgb - gini_lgb_fair:.4f} ({(gini_lgb - gini_lgb_fair) / gini_lgb:.1%} relative drop)")
+
+    return {
+        "comparison": comparison, "model_all": model, "model_fair": model_fair,
+        "X_test_fair": X_test_fair, "pred_lgb_fair": pred_lgb_fair,
+    }
+
+
+def save_shap_plots(model_fair, X_test_fair, pred_lgb_fair, applicant_id: int = 104180):
+    """SHAP plots for the OFFICIAL CHALLENGER (fair-lending LightGBM)."""
     explainer = shap.TreeExplainer(model_fair)
     shap_values = explainer(X_test_fair)
 
@@ -105,10 +113,8 @@ if __name__ == "__main__":
     plt.close(fig)
     print(f"Saved {FIG_DIR}/shap_summary.png")
 
-    # Individual applicant -- same low-score applicant highlighted in step 5
-    applicant_id = 104180
     if applicant_id not in X_test_fair.index:
-        applicant_id = y_test.index[np.argmax(pred_lgb_fair)]  # fall back to highest-risk applicant
+        applicant_id = X_test_fair.index[np.argmax(pred_lgb_fair)]  # fall back to highest-risk applicant
     row_pos = X_test_fair.index.get_loc(applicant_id)
 
     plt.figure()
@@ -119,3 +125,17 @@ if __name__ == "__main__":
     fig.savefig(f"{FIG_DIR}/shap_individual.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {FIG_DIR}/shap_individual.png (applicant {applicant_id})")
+
+
+if __name__ == "__main__":
+    pd.set_option("display.width", 140)
+    os.makedirs(FIG_DIR, exist_ok=True)
+
+    df = pd.read_csv("Data/cs-training-cleaned.csv", index_col=0)
+    train, test = split_train_test(df, TARGET, test_size=0.3, random_state=42)
+
+    champion = run_pipeline(verbose=False)
+    result = compare_models(train, test, champion, verbose=True)
+
+    print("\n=== Computing SHAP values for the OFFICIAL CHALLENGER (fair-lending LightGBM) ===")
+    save_shap_plots(result["model_fair"], result["X_test_fair"], result["pred_lgb_fair"])
