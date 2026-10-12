@@ -1,5 +1,6 @@
 import re
 import os
+import pickle
 import random
 from datetime import datetime
 
@@ -7,13 +8,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from scorecard_model import run_pipeline, TARGET
-from points_scorecard import build_points_table, score_applicants, reason_codes
+from points_scorecard import score_applicants, reason_codes
 from decision_engine import make_decision
-from validate_and_report import assign_bands, ks_statistic, predict_proba_bad
+from validate_and_report import assign_bands
 from policy_retriever import load_policy_chunks, PolicyRetriever
 from rag_memo import generate_memo_with_mode
-from challenger_model import compare_models
 from pdf_report import build_pdf_report
 import portfolio_economics as pe
 
@@ -29,19 +28,64 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ============================= CACHED LOADERS =============================
-@st.cache_resource
-def load_pipeline():
+ARTIFACT_PATH = os.path.join("models", "app_artifacts.pkl")
+
+
+def _load_from_artifacts():
+    """Deployment path: everything the app needs was precomputed locally (see
+    build_artifacts.py, which needs Data/ and isn't run here) and pickled as
+    plain pandas/numpy/dict objects -- no statsmodels/LightGBM objects, no
+    Data/ access, so this works with just the repo checked out."""
+    with open(ARTIFACT_PATH, "rb") as f:
+        art = pickle.load(f)
+    return {
+        "transformer": art["transformer"], "features_b": art["features_b"],
+        "points_table": art["points_table"],
+        "score_min": art["score_min"], "score_max": art["score_max"], "cutoffs": art["cutoffs"],
+        "metrics": art["metrics"], "comparison": art["comparison"], "economics": art["economics"],
+    }
+
+
+def _load_from_training():
+    """Dev-machine fallback: no artifacts file, so train the pipeline locally
+    from Data/cs-training-cleaned.csv (same computations build_artifacts.py
+    would do, just run live instead of precomputed)."""
+    from scorecard_model import run_pipeline, TARGET
+    from points_scorecard import build_points_table
+    from validate_and_report import ks_statistic, predict_proba_bad
+    from challenger_model import compare_models
+
     result = run_pipeline(verbose=False)
-    points_table = build_points_table(result["model_b"], result["transformer"], result["features_b"])
-    retriever = PolicyRetriever(load_policy_chunks())
-    return result, points_table, retriever
+    transformer, model_b, features_b = result["transformer"], result["model_b"], result["features_b"]
+    train, test = result["train"], result["test"]
+
+    points_table = build_points_table(model_b, transformer, features_b)
+    _, _, scores, _ = score_applicants(test, transformer, features_b, points_table)
+    bands, cutoffs = assign_bands(scores)
+
+    pred = predict_proba_bad(model_b, transformer, test, features_b)
+    ks = ks_statistic(test[TARGET].values, pred)
+    metrics = {"gini": result["gini_b"], "auc": result["auc_b"], "ks": float(ks)}
+
+    comparison = compare_models(train, test, result, verbose=False)["comparison"]
+    economics = pe.summarise(bands.astype(str).values, test[TARGET].values, cutoffs)
+
+    return {
+        "transformer": transformer, "features_b": features_b, "points_table": points_table,
+        "score_min": float(scores.min()), "score_max": float(scores.max()), "cutoffs": cutoffs,
+        "metrics": metrics, "comparison": comparison, "economics": economics,
+    }
 
 
 @st.cache_resource
+def load_app_state():
+    state = _load_from_artifacts() if os.path.exists(ARTIFACT_PATH) else _load_from_training()
+    state["retriever"] = PolicyRetriever(load_policy_chunks())
+    return state
+
+
 def load_model_comparison():
-    result, _, _ = load_pipeline()
-    comparison = compare_models(result["train"], result["test"], result, verbose=False)
-    return comparison["comparison"]
+    return load_app_state()["comparison"]
 
 
 @st.cache_data
@@ -50,34 +94,24 @@ def load_policy_text(filename: str) -> str:
         return f.read()
 
 
-@st.cache_data
 def score_range_and_cutoffs():
-    result, points_table, _ = load_pipeline()
-    _, _, scores, _ = score_applicants(result["test"], result["transformer"], result["features_b"], points_table)
-    _, cutoffs = assign_bands(scores)
-    return float(scores.min()), float(scores.max()), cutoffs
+    s = load_app_state()
+    return s["score_min"], s["score_max"], s["cutoffs"]
 
 
-@st.cache_data
 def champion_metrics():
-    result, _, _ = load_pipeline()
-    pred = predict_proba_bad(result["model_b"], result["transformer"], result["test"], result["features_b"])
-    ks = ks_statistic(result["test"][TARGET].values, pred)
-    return {"gini": result["gini_b"], "auc": result["auc_b"], "ks": ks}
+    return load_app_state()["metrics"]
 
 
-@st.cache_data
 def portfolio_view():
     """Cut-off trade-off and expected loss by band, measured on the test set."""
-    result, points_table, _ = load_pipeline()
-    _, _, scores, _ = score_applicants(result["test"], result["transformer"], result["features_b"], points_table)
-    bands, cutoffs = assign_bands(scores)
-    y = result["test"].loc[scores.index, TARGET].values
-    return pe.summarise(bands.astype(str).values, y, cutoffs)
+    return load_app_state()["economics"]
 
 
-result, points_table, retriever = load_pipeline()
-transformer, model_b, features_b = result["transformer"], result["model_b"], result["features_b"]
+_state = load_app_state()
+transformer, features_b, points_table, retriever = (
+    _state["transformer"], _state["features_b"], _state["points_table"], _state["retriever"],
+)
 
 if "nav" not in st.session_state:
     st.session_state.nav = "Assess"
@@ -500,8 +534,7 @@ def render_about_page():
             st.html("<br>")
             st.caption("Scorecard champion vs. the official fair-lending LightGBM challenger vs. an all-features "
                        "reference model (not production-usable -- it uses age and dependents).")
-            with st.spinner("Training LightGBM challengers (first load only, cached after)..."):
-                comparison_df = load_model_comparison()
+            comparison_df = load_model_comparison()
             st.dataframe(comparison_df.style.format({"AUC": "{:.4f}", "Gini": "{:.4f}", "KS": "{:.4f}"}),
                         use_container_width=True)
 
