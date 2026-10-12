@@ -54,13 +54,15 @@ class PolicyRetriever:
 
 def retrieve_for_applicant(decision: dict, reason_codes: list, retriever: PolicyRetriever, top_k: int = 2) -> list:
     """Run one search per: risk band, each triggered rule, adverse-action
-    requirements, and the applicant's top reason codes -- then merge,
-    deduplicating by (doc, section) and keeping the first (highest-priority)
-    occurrence. Returns chunks in citation order, numbered from 1."""
+    requirements, required credit memo contents, and the applicant's top
+    reason codes -- then merge, deduplicating by (doc, section) and keeping
+    the first (highest-priority) occurrence. Returns chunks in citation
+    order, numbered from 1."""
     queries = [f"Band {decision['band']} {decision['band_decision']} risk band score cut-off decision"]
     for rule_id, desc, action in decision["rule_details"]:
         queries.append(f"{rule_id} {desc} {action}")
     queries.append("adverse action notice specific principal reasons ECOA Regulation B fair lending rejection")
+    queries.append("credit memo must contain applicant identifier score band decision reason codes preparer")
     if reason_codes:
         reason_text = " ".join(f"{r['variable']} {r['applicant_bin']}" for r in reason_codes)
         queries.append(f"reason codes points deduction {reason_text}")
