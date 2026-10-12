@@ -7,5 +7,6 @@ lightgbm==4.7.0
 shap==0.53.0
 streamlit==1.45.1
 anthropic==1.13.0
+fpdf2==2.8.9
 # >=1.1.0 required: older brotli versions crash httpx2's decoder (anthropic's HTTP dependency)
 brotli>=1.1.0
