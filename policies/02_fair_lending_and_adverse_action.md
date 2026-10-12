@@ -75,3 +75,17 @@ notice to the applicant should state, in plain language:
 
 Reason codes and rule triggers must never reference age, dependents, or any
 other protected characteristic, even indirectly — consistent with Section 4.
+
+**Notice timing for Manual review and Refer to underwriter.** Manual review
+and Refer to underwriter are not final decisions, so no adverse action
+notice is sent while an application sits in either status — an applicant is
+not told "declined" when a human simply hasn't looked at the file yet.
+Once the underwriter reaches a final decision:
+
+- **Approve or Approve with conditions:** the standard approval
+  communication applies; no adverse action notice is required.
+- **Decline:** the standard notice described above applies at that point,
+  using the reason codes and triggered rules as they stand after review
+  (which may differ from the automated reason codes if the underwriter's
+  review changed the picture — e.g. valid delinquency data was obtained that
+  the automated score couldn't see).
