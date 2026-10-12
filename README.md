@@ -6,6 +6,12 @@
 > dataset -- not a real bank, not
 > real applicants, and nothing here is legal, compliance, or credit advice.
 
+> **At a glance**
+> - **Scorecard:** Gini 0.708, AUC 0.854, KS 0.557 on held-out data; all five risk bands land inside their target default-rate range.
+> - **Recommended cut-off (approve bands A–C):** approves 84.7% of applicants at a 2.85% default rate, keeps out 64% of eventual defaulters, expected loss 12.8 per 1,000 lent.
+> - **Fair lending:** age and dependents excluded at a cost of ~0.7% Gini.
+> - **Stack:** WoE/IV logistic scorecard, LightGBM + SHAP challenger, RAG credit memos (Claude API), Streamlit app with PDF reports.
+
 ## Project Summary
 
 A full retail-credit-risk build, from raw Kaggle data to a working app:
@@ -48,6 +54,27 @@ reflects genuine information loss, not a quirk of either model.
 
 All five bands' actual default rates fall inside their target range on
 held-out data -- the scorecard is calibrated, not just well-ranked.
+
+### Choosing the cut-off (test set)
+
+Where the approval line sits decides how much business is written and how
+much is lost. Expected loss = PD x LGD x EAD, with PD = each band's observed
+two-year default rate, LGD assumed at 45% (a common benchmark for unsecured
+lending) and EAD = amount lent, so figures are two-year losses per 1,000 lent.
+
+| Approval policy | Lowest score approved | Share approved | Default rate of approved | Defaulters kept out | Good applicants turned away | Expected loss per 1,000 |
+|---|---|---|---|---|---|---|
+| Band A only | 599 | 40.8% | 0.94% | 94.3% | 56.7% | 4.2 |
+| Bands A-B | 572 | 70.1% | 1.74% | 81.8% | 26.2% | 7.8 |
+| **Bands A-C (current policy)** | **551** | **84.7%** | **2.85%** | **64.0%** | **11.8%** | **12.8** |
+| Bands A-D | 527 | 93.0% | 4.07% | 43.6% | 4.4% | 18.3 |
+| Everyone | -- | 100% | 6.70% | 0% | 0% | 30.2 |
+
+Expected loss by band: A 4.2, B 12.8, C 36.8, D 73.8, E 187.8 per 1,000 lent.
+Tightening from A-C to A-B would cut the approved book's default rate from
+2.85% to 1.74% but approve 15 fewer applicants in every 100; loosening to
+A-D would approve 8 more in every 100 at a 4.07% default rate. Reproduce with
+`python portfolio_economics.py`.
 
 ### Charts
 
