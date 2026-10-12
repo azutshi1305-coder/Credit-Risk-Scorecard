@@ -167,17 +167,41 @@ def build_row(utilization_pct, d30, d60, d90, monthly_income, debt_ratio_pct, re
     }, name=applicant_id)
 
 
-def quick_score(row: pd.Series):
+def quick_score(row: pd.Series, loan: dict = None):
     """Score + band + decision for one row. Cheap (a table lookup), so the live panel and
     the what-if simulator can call it on every change. Never touches the memo/AI."""
     df = pd.DataFrame([row])
     bin_labels, points_df, scores, base_points = score_applicants(df, transformer, features_b, points_table)
     bands, _ = assign_bands(scores)
-    decision = make_decision(row, scores[row.name], bands[row.name])
+    decision = make_decision(row, scores[row.name], bands[row.name], loan=loan)
     return decision, bin_labels, points_df, base_points
 
 
-STEPS = ["Applicant", "Credit usage", "Payment history", "Income & debt", "Review"]
+STEPS = ["Applicant", "Credit cards", "Payment history", "Income & debt", "The loan", "Review"]
+TERM_OPTIONS = ["12", "24", "36", "48", "60"]
+
+
+def monthly_repayment(amount, months, annual_rate_pct):
+    """Standard loan instalment (EMI) for a fixed-rate loan repaid in equal monthly amounts."""
+    r = annual_rate_pct / 100.0 / 12.0
+    if r == 0:
+        return amount / months
+    return amount * r * (1 + r) ** months / ((1 + r) ** months - 1)
+
+
+def _loan(d):
+    """The requested loan's figures, or None until amount, term and rate are all answered.
+    post_loan_dti is a fraction (0.42 = 42%), None when income wasn't declared."""
+    amt, term, rate = d.get("amt"), d.get("term"), d.get("rate")
+    if amt is None or amt <= 0 or term is None or rate is None:
+        return None
+    months = int(term)
+    emi = monthly_repayment(amt, months, rate)
+    income = None if d.get("income_unknown") else d.get("income")
+    pay = d.get("pay") or 0.0
+    post = (pay + emi) / income if income else None
+    return {"amount": float(amt), "term_months": months, "rate_pct": float(rate),
+            "emi": float(emi), "post_loan_dti": post}
 
 
 def _data():
@@ -205,13 +229,65 @@ def _answers(d):
     }
 
 
+def _ratio_pct(part, whole):
+    """part / whole x 100, or None when either is missing or whole isn't above 0."""
+    if part is None or whole is None or whole <= 0:
+        return None
+    return part / whole * 100.0
+
+
+# One-click example applicants, so someone exploring the app can see a full result
+# without inventing numbers. Values are illustrative, not real people.
+SAMPLE_APPLICANTS = {
+    "Strong profile": {
+        "name": "Meera Kapoor", "no_cards": False, "bal": 3000.0, "lim": 40000.0,
+        "hist_unknown": False, "d30": "0", "d60": "0", "d90": "0",
+        "income_unknown": False, "income": 6500.0, "pay": 1300.0, "re": "1",
+        "amt": 15000.0, "term": "36", "rate": 11.0,
+    },
+    "Mixed profile": {
+        "name": "Rohan Mehta", "no_cards": False, "bal": 14000.0, "lim": 25000.0,
+        "hist_unknown": False, "d30": "1", "d60": "0", "d90": "0",
+        "income_unknown": False, "income": 4200.0, "pay": 1600.0, "re": "0",
+        "amt": 10000.0, "term": "36", "rate": 14.0,
+    },
+    "Weak profile": {
+        "name": "Arjun Nair", "no_cards": False, "bal": 9800.0, "lim": 9000.0,
+        "hist_unknown": False, "d30": "3", "d60": "1", "d90": "2",
+        "income_unknown": False, "income": 2800.0, "pay": 1650.0, "re": "0",
+        "amt": 8000.0, "term": "24", "rate": 19.0,
+    },
+}
+
+
+def _derive(d):
+    """Work out the two ratios the model needs from the plain amounts people actually know."""
+    d["util"] = 0.0 if d.get("no_cards") else _ratio_pct(d.get("bal"), d.get("lim"))
+    d["dti"] = None if d.get("income_unknown") else _ratio_pct(d.get("pay"), d.get("income"))
+
+
+def _load_sample(label):
+    d = _data()
+    d.clear()
+    d.update(SAMPLE_APPLICANTS[label])
+    _derive(d)
+    for k in [k for k in st.session_state.keys() if str(k).startswith("w_")]:
+        del st.session_state[k]
+    _go(len(STEPS) - 1)   # straight to the review screen
+
+
 def _step_missing(step, d):
     """Required answers still missing on a given step (empty list = step complete)."""
     a = _answers(d)
     if step == 0:
         return [] if (d.get("name") or "").strip() else ["applicant's name"]
     if step == 1:
-        return [] if a["utilization_pct"] is not None else ["credit utilisation"]
+        if d.get("no_cards") or a["utilization_pct"] is not None:
+            return []
+        missing = [lbl for lbl, k in (("total balances", "bal"), ("total credit limits", "lim")) if d.get(k) is None]
+        if not missing and (d.get("lim") or 0) <= 0:
+            missing.append("credit limits above 0 (or switch on 'No credit cards or credit lines')")
+        return missing
     if step == 2:
         if a["delinquency_unknown"]:
             return []
@@ -220,12 +296,23 @@ def _step_missing(step, d):
     if step == 3:
         missing = []
         if not a["income_unknown"]:
-            if a["monthly_income"] is None:
+            if d.get("income") is None:
                 missing.append("monthly income")
-            if a["debt_ratio_pct"] is None:
-                missing.append("debt-to-income")
+            elif d["income"] <= 0:
+                missing.append("monthly income above 0 (or switch on 'Income wasn't declared')")
+            if d.get("pay") is None:
+                missing.append("monthly debt payments")
         if a["real_estate"] is None:
             missing.append("property loans")
+        return missing
+    if step == 4:
+        missing = []
+        if d.get("amt") is None or d["amt"] <= 0:
+            missing.append("loan amount")
+        if d.get("term") is None:
+            missing.append("repayment period")
+        if d.get("rate") is None:
+            missing.append("interest rate")
         return missing
     return []
 
@@ -248,12 +335,31 @@ def render_step(step, d):
                                   placeholder="e.g. Jordan Blake", help=FH.HELP["name"])
         st.html('<div class="sb-note">Only shown on the result page and the report — never used in '
                 'scoring and never sent to the AI.</div>')
+        st.html('<div class="sb-sample-title">Just exploring? Load an example applicant</div>'
+                '<div class="sb-sample-sub">Fills in every step and takes you to the review screen.</div>')
+        with st.container(key="samples"):
+            cols = st.columns(len(SAMPLE_APPLICANTS))
+            for col, label in zip(cols, SAMPLE_APPLICANTS):
+                col.button(label, key=f"sample_{label}", on_click=_load_sample, args=(label,),
+                           use_container_width=True)
 
     elif step == 1:
-        _question("How much of their available credit is in use?",
-                  "Total card and credit-line balances as a share of their combined limits.")
-        d["util"] = st.number_input("Credit utilisation (%) *", min_value=0.0, value=d.get("util"), step=1.0,
-                                    format="%.0f", placeholder="e.g. 30", key="w_util", help=FH.HELP["utilisation"])
+        _question("How much do they owe on credit cards?",
+                  "Add up the balances and the credit limits across all their credit cards and personal "
+                  "credit lines. Their banking app or card statements show both.")
+        d["no_cards"] = st.toggle("No credit cards or credit lines", value=d.get("no_cards", False),
+                                  key="w_no_cards", help=FH.HELP["no_cards"])
+        if not d["no_cards"]:
+            c1, c2 = st.columns(2)
+            d["bal"] = c1.number_input("Total balances owed *", min_value=0.0, value=d.get("bal"), step=100.0,
+                                       format="%.0f", placeholder="e.g. 15000", key="w_bal",
+                                       help=FH.HELP["balances"])
+            d["lim"] = c2.number_input("Total credit limits *", min_value=0.0, value=d.get("lim"), step=1000.0,
+                                       format="%.0f", placeholder="e.g. 50000", key="w_lim",
+                                       help=FH.HELP["limits"])
+        _derive(d)
+        if not d["no_cards"] and d["util"] is not None:
+            st.html(f'<div class="sb-calc">That means <b>{d["util"]:.0f}%</b> of their available credit is in use.</div>')
 
     elif step == 2:
         _question("Any late payments in the last two years?",
@@ -277,10 +383,36 @@ def render_step(step, d):
             d["income"] = c1.number_input("Monthly income *", min_value=0.0, value=d.get("income"), step=100.0,
                                           format="%.0f", placeholder="e.g. 5000", key="w_income",
                                           help=FH.HELP["income"])
-            d["dti"] = c2.number_input("Debt-to-income (%) *", min_value=0.0, value=d.get("dti"), step=1.0,
-                                       format="%.0f", placeholder="e.g. 30", key="w_dti", help=FH.HELP["dti"])
+            d["pay"] = c2.number_input("Monthly debt payments *", min_value=0.0, value=d.get("pay"), step=100.0,
+                                       format="%.0f", placeholder="e.g. 1500", key="w_pay",
+                                       help=FH.HELP["debt_payments"])
+        _derive(d)
+        if not d["income_unknown"] and d["dti"] is not None:
+            st.html(f'<div class="sb-calc">That means <b>{d["dti"]:.0f}%</b> of their income goes on debt payments.</div>')
         d["re"] = st.segmented_control("Property loans (mortgages, home-equity lines) *", PROPERTY_OPTIONS,
                                        default=d.get("re"), key="w_re", help=FH.HELP["real_estate"])
+
+    elif step == 4:
+        _question("What do they want to borrow?",
+                  "The loan being applied for. The app works out the monthly repayment and checks it "
+                  "is affordable alongside their existing debts.")
+        c1, c2 = st.columns(2)
+        d["amt"] = c1.number_input("Loan amount *", min_value=0.0, value=d.get("amt"), step=1000.0,
+                                   format="%.0f", placeholder="e.g. 15000", key="w_amt",
+                                   help=FH.HELP["loan_amount"])
+        d["rate"] = c2.number_input("Interest rate (% a year) *", min_value=0.0, max_value=60.0,
+                                    value=d.get("rate"), step=0.5, format="%.1f", placeholder="e.g. 12",
+                                    key="w_rate", help=FH.HELP["interest_rate"])
+        d["term"] = st.segmented_control("Repayment period (months) *", TERM_OPTIONS, default=d.get("term"),
+                                         key="w_term", help=FH.HELP["loan_term"])
+        loan = _loan(d)
+        if loan:
+            if loan["post_loan_dti"] is None:
+                st.html(f'<div class="sb-calc">Monthly repayment about <b>{loan["emi"]:,.0f}</b>. '
+                        f"Income wasn't declared, so affordability can't be checked.</div>")
+            else:
+                st.html(f'<div class="sb-calc">Monthly repayment about <b>{loan["emi"]:,.0f}</b>. With it, debt '
+                        f'payments would take <b>{loan["post_loan_dti"] * 100:.0f}%</b> of income.</div>')
 
     else:
         _question("Check the details", "Everything look right? Edit any section, or run the assessment.")
@@ -288,18 +420,33 @@ def render_step(step, d):
         late = ("Not available" if a["delinquency_unknown"] else
                 f"{d.get('d30')} × 30–59 days, {d.get('d60')} × 60–89 days, {d.get('d90')} × 90+ days")
         income = ("Not declared" if a["income_unknown"] else
-                  f"{a['monthly_income']:,.0f} a month · debt-to-income {a['debt_ratio_pct']:.0f}%")
+                  f"{a['monthly_income']:,.0f} a month · pays {d.get('pay', 0):,.0f} on debts "
+                  f"({a['debt_ratio_pct']:.0f}% of income)")
+        usage = ("No credit cards or credit lines" if d.get("no_cards") else
+                 f"{d.get('bal', 0):,.0f} owed on {d.get('lim', 0):,.0f} of limits "
+                 f"({a['utilization_pct']:.0f}% in use)")
         rows = [
             (0, "Applicant", d.get("name", "")),
-            (1, "Credit utilisation", f"{a['utilization_pct']:.0f}%"),
+            (1, "Credit cards", usage),
             (2, "Late payments", late),
             (3, "Income & debt", f"{income} · property loans {d.get('re')}"),
+            (4, "The loan", _loan_text(_loan(d))),
         ]
         for target, label, value in rows:
             c1, c2 = st.columns([0.82, 0.18], vertical_alignment="center")
             c1.html(f'<div class="sb-review-row"><div class="sb-review-label">{label}</div>'
                     f'<div class="sb-review-value">{value}</div></div>')
             c2.button("Edit", key=f"edit_{target}", on_click=_go, args=(target,), use_container_width=True)
+
+
+def _loan_text(loan):
+    if not loan:
+        return "Not entered"
+    text = (f"{loan['amount']:,.0f} over {loan['term_months']} months at {loan['rate_pct']:.1f}% · "
+            f"repayment about {loan['emi']:,.0f} a month")
+    if loan["post_loan_dti"] is not None:
+        text += f" ({loan['post_loan_dti'] * 100:.0f}% of income with existing debts)"
+    return text
 
 
 def render_form_page():
@@ -341,11 +488,12 @@ def render_form_page():
         ("Credit usage", not _step_missing(1, d)),
         ("Payment history", not _step_missing(2, d)),
         ("Income & debt", not _step_missing(3, d)),
+        ("The loan", not _step_missing(4, d)),
     ]
     preview = None
     if all(done for label, done in progress[1:]):
         row = build_row(**a)
-        decision, _, _, _ = quick_score(row)
+        decision, _, _, _ = quick_score(row, _loan(d))
         preview = {"score": float(decision["score"]), "band": decision["band"],
                    "decision": decision["final_decision"], "flags": decision["triggered_rules"],
                    "pd_text": vm.PD_RANGE_TEXT.get(decision["band"], "")}
@@ -353,7 +501,7 @@ def render_form_page():
         st.html(comp.live_panel_html(progress, preview, cutoffs))
 
     if assess_clicked:
-        incomplete = [s for s in range(4) if _step_missing(s, d)]
+        incomplete = [s for s in range(len(STEPS) - 1) if _step_missing(s, d)]
         if incomplete:
             _go(incomplete[0])
             st.session_state.step_error = "a few answers are still missing on this step."
@@ -370,7 +518,8 @@ def render_form_page():
 
         bin_labels, points_df, scores, base_points = score_applicants(applicant_df, transformer, features_b, points_table)
         bands, cutoffs = assign_bands(scores)
-        decision = make_decision(row, scores[applicant_id], bands[applicant_id])
+        loan = _loan(d)
+        decision = make_decision(row, scores[applicant_id], bands[applicant_id], loan=loan)
         r_codes = reason_codes(points_table, features_b, bin_labels.loc[applicant_id])
 
         with st.spinner("Writing the credit memo…"):
@@ -389,6 +538,7 @@ def render_form_page():
             "score_range_cutoffs": score_range_and_cutoffs(),
             "generated_at": datetime.now().strftime("%d %b %Y, %H:%M"),
             "economics": portfolio_view(),
+            "loan": loan,
             "pdf_bytes": None,
         }
         st.session_state.page = "result"
@@ -437,10 +587,22 @@ def render_what_if(a, cutoffs):
             sim["NumberOfTimes90DaysLate"] = d90
             sim["NumberOfTime30-59DaysPastDueNotWorse"] = d30
         sim.name = "what_if"
-        new_decision, _, _, _ = quick_score(sim)
+        loan = a.get("loan")
+        sim_loan = None
+        if loan and income_known:
+            sim_loan = dict(loan, post_loan_dti=sim["DebtRatio"] + loan["emi"] / row["MonthlyIncome"])
+        new_decision, _, _, _ = quick_score(sim, sim_loan)
         with right:
             st.html(comp.whatif_html(float(base["score"]), float(new_decision["score"]), base["band"],
                                      new_decision["band"], new_decision["final_decision"], cutoffs))
+
+
+def _loan_loss_text(loan, band_eco, eco):
+    if not loan:
+        return ""
+    loss = band_eco["pd"] * eco["lgd"] * loan["amount"]
+    return (f'On this loan of {loan["amount"]:,.0f}, that is an expected loss of about <b>{loss:,.0f}</b> '
+            f'over two years. ')
 
 
 # ============================= RESULT PAGE =============================
@@ -477,6 +639,7 @@ def render_result_page():
             st.html(f'<div class="sb-eco-note"><b>Expected loss for band {decision["band"]}:</b> about '
                     f'{band_eco["el_per_1000"]:.0f} for every {eco["per_amount"]:,} lent '
                     f'({band_eco["pd"]:.1%} default rate × {eco["lgd"]:.0%} lost on default). '
+                    f'{_loan_loss_text(a.get("loan"), band_eco, eco)}'
                     f'The PDF report shows how each approval cut-off would change this.</div>')
 
         st.html("<br>")

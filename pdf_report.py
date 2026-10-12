@@ -329,9 +329,11 @@ def render_business_page(pdf, assessment):
 
     # --- this applicant callout ---
     me = bands.get(band)
+    loan = assessment.get("loan")
     if me:
         y = pdf.get_y() + 4
-        rounded(pdf, L, y, W, 17, LEDGER_TINT, radius=3)
+        box_h = 23 if loan else 17
+        rounded(pdf, L, y, W, box_h, LEDGER_TINT, radius=3)
         rounded(pdf, L + 5, y + 4.2, 9, 9, DIAL[band], radius=2.5)
         pdf.set_xy(L + 5, y + 4.2)
         pdf.set_font("Lora", "B", 12)
@@ -347,7 +349,17 @@ def render_business_page(pdf, assessment):
         pdf.set_text_color(*MEMO_INK)
         pdf.cell(0, 4.5, f"Band {band} default rate {_pct(me['pd'])}  ×  {lgd:.0%} of the balance lost on default"
                          f"  ×  {per:,} lent  =  {me['el_per_1000']:.1f}")
-        pdf.set_y(y + 17)
+        if loan:
+            loss = me["pd"] * lgd * loan["amount"]
+            line = (f"This loan of {loan['amount']:,.0f}: expected loss about {loss:,.0f}  ·  "
+                    f"repayment {loan['emi']:,.0f} a month")
+            if loan.get("post_loan_dti") is not None:
+                line += f"  ·  {loan['post_loan_dti'] * 100:.0f}% of income on debt"
+            pdf.set_xy(L + 18, y + 14.6)
+            pdf.set_font("Nunito", "B", 8.4)
+            pdf.set_text_color(*INK)
+            pdf.multi_cell(W - 22, 4.3, line, align="L")
+        pdf.set_y(y + box_h)
 
     # --- cut-off trade-off table ---
     pdf.set_y(pdf.get_y() + 7)
@@ -502,6 +514,10 @@ GLOSSARY = [
      "Mortgages and other loans secured on property, including home-equity lines of credit.",
      "A count of open loans. In this scorecard, holding one or two earns more points than holding "
      "none, because it usually reflects an established credit history."),
+    ("Monthly repayment",
+     "The fixed amount repaid each month on the new loan, covering interest and part of the amount borrowed.",
+     "Worked out from the loan amount, interest rate and repayment period. 15,000 over 36 months at "
+     "11% a year is about 491 a month."),
     ("Scorecard points",
      "Each characteristic earns points; the score is base points plus the points from every "
      "characteristic. Higher means lower risk.",
@@ -520,8 +536,8 @@ GLOSSARY = [
      None),
     ("Hard policy rules",
      "Checks that apply whatever the score: serious past delinquency, utilisation above 100%, "
-     "debt-to-income above 50%, or undeclared income send the file to an underwriter. Missing "
-     "payment history sends it to manual review.",
+     "debt-to-income above 50% (today, or once the new loan's repayment is added), or undeclared "
+     "income send the file to an underwriter. Missing payment history sends it to manual review.",
      None),
     ("Gini, AUC and KS",
      "Standard measures of how well the model separates applicants who repay from those who "
@@ -542,15 +558,15 @@ def _glossary_entry(pdf, term, meaning, how, dry=False):
     if how:
         pdf.set_font("Nunito", "", 8.3)
         h2 = len(pdf.multi_cell(text_w, 4.3, how, dry_run=True, output="LINES", align="L")) * 4.3 + 1.2
-    h = max(h1 + h2, 5) + 5.5
+    h = max(h1 + h2, 5) + 4.2
     if dry:
         return h
     y = pdf.get_y()
-    pdf.set_xy(L, y + 2.4)
+    pdf.set_xy(L, y + 1.8)
     pdf.set_font("Lora", "B", 9.8)
     pdf.set_text_color(*LEDGER)
     pdf.multi_cell(TERM_W, 4.6, term, align="L")
-    pdf.set_xy(L + TERM_W + GAP, y + 2.4)
+    pdf.set_xy(L + TERM_W + GAP, y + 1.8)
     pdf.set_font("Nunito", "", 9)
     pdf.set_text_color(*MEMO_INK)
     pdf.multi_cell(text_w, 4.6, meaning, align="L")
@@ -636,7 +652,11 @@ def build_pdf_report(assessment: dict) -> bytes:
     pdf.set_xy(L + 8, hy + 7)
     pdf.set_font("PublicSans", "", 8.5)
     pdf.set_text_color(*MUTED)
-    pdf.cell(left_w, 4, "Applicant")
+    loan = assessment.get("loan")
+    label = "Applicant"
+    if loan:
+        label += f"  ·  Loan of {loan['amount']:,.0f} over {loan['term_months']} months"
+    pdf.cell(left_w, 4, label)
     pdf.set_xy(L + 8, hy + 12)
     pdf.set_font("Lora", "B", 23)
     pdf.set_text_color(*INK)

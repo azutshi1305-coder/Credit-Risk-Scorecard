@@ -332,5 +332,17 @@ div[class*="st-key-step_body_"] {{ animation: sbStepIn .28s ease-out both; }}
     padding: .7rem 1rem; font-size: .9rem; color: var(--ink); margin-top: .9rem;
 }}
 .sb-eco-note b {{ color: var(--ledger); }}
+.sb-calc {{
+    display: inline-block; background: {COLORS['teal_tint']}; color: var(--ink); border-radius: 999px;
+    padding: .35rem .9rem; font-size: .88rem; margin-top: .2rem;
+}}
+.sb-calc b {{ color: var(--ledger); }}
+.sb-sample-title {{ margin-top: 1.6rem; padding-top: 1.1rem; border-top: 1px dashed var(--rule);
+    font-weight: 600; font-size: .9rem; color: var(--ink); }}
+.sb-sample-sub {{ color: var(--muted); font-size: .8rem; margin-bottom: .2rem; }}
+.st-key-samples button {{ border-radius: 999px !important; border: 1px solid var(--ledger) !important;
+    color: var(--ledger) !important; background: #fff !important; font-size: .85rem !important; }}
+.st-key-samples button p {{ color: var(--ledger) !important; }}
+.st-key-samples button:hover {{ background: {COLORS['teal_tint']} !important; }}
 </style>
 """

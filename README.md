@@ -209,6 +209,15 @@ reports/screens/             App screenshots (if captured -- see Screens below)
 
 ## Limitations
 
+- **A risk score, not a full underwriting decision.** The dataset has seven
+  applicant fields, so the model scores default risk from credit use, late
+  payments, income, debt and property loans. A real lender would also look at
+  length of credit history, recent credit applications, employment and
+  verified income (payslips, bank statements), the credit bureau score, and
+  identity and fraud checks. The app adds the requested loan on top of the
+  score -- it works out the monthly repayment, re-checks affordability with it
+  included (rule R6) and states expected loss in money for that loan -- but
+  the loan amount is not a model input.
 - **Random, not out-of-time, train/test split.** The 70/30 split is random,
   which tests generalization to unseen applicants but not stability over
   time. A production validation would hold out a later vintage (e.g. train

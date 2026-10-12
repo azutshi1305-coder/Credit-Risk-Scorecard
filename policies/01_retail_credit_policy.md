@@ -66,6 +66,7 @@ check itself and call the application approved.
 | R3 | Debt-to-income (DebtRatio) above 50% | Refer to underwriter — affordability check required |
 | R4 | Declared monthly income missing | Refer to underwriter — income must be verified |
 | R5 | Missing/invalid delinquency data (sentinel codes from data cleaning) | Manual review (see exception below) |
+| R6 | Debt-to-income above 50% once the requested loan's monthly repayment is added to existing debt payments | Refer to underwriter — affordability check required |
 
 R5 exists because the model build found that applications with missing or
 placeholder delinquency codes are themselves the single highest-risk group in

@@ -22,9 +22,10 @@ DELINQUENCY_COLS = [
 ]
 
 
-def apply_hard_rules(row: pd.Series) -> list:
+def apply_hard_rules(row: pd.Series, loan: dict = None) -> list:
     """Returns a list of (rule_id, description, minimum_action) for every
-    hard policy rule this applicant triggers."""
+    hard policy rule this applicant triggers. `loan` (optional) carries the
+    requested loan's affordability figures, used by R6."""
     triggered = []
 
     if pd.notna(row["NumberOfTimes90DaysLate"]) and row["NumberOfTimes90DaysLate"] >= 1:
@@ -42,10 +43,18 @@ def apply_hard_rules(row: pd.Series) -> list:
     if row[DELINQUENCY_COLS].isna().any():
         triggered.append(("R5", "Missing/invalid delinquency data -- manual review required", "Manual review"))
 
+    # R6: affordable today, but not once the new loan's repayment is added. Only checked
+    # when R3 hasn't already fired, so the same affordability concern isn't counted twice.
+    post = (loan or {}).get("post_loan_dti")
+    r3 = pd.notna(row["DebtRatio"]) and row["DebtRatio"] > 0.5
+    if post is not None and post > 0.5 and not r3:
+        triggered.append(("R6", "Debt-to-income above 50% once the new loan repayment is added -- "
+                                "refer to underwriter for affordability check", "Refer to underwriter"))
+
     return triggered
 
 
-def make_decision(row: pd.Series, score: float, band: str) -> dict:
+def make_decision(row: pd.Series, score: float, band: str, loan: dict = None) -> dict:
     """Any triggered hard rule floors the decision at 'Refer to underwriter'
     -- a rule can never leave an applicant at Approve or Approve with
     conditions, because the check it requires (affordability, income
@@ -59,7 +68,7 @@ def make_decision(row: pd.Series, score: float, band: str) -> dict:
     quality issue. See policies/01_retail_credit_policy.md Section 4 for
     the trade-off this involves."""
     band_decision = BAND_DECISION[band]
-    rules = apply_hard_rules(row)
+    rules = apply_hard_rules(row, loan)
     triggered_ids = [r[0] for r in rules]
 
     tiers = [(SEVERITY[band_decision], f"Band {band} ({band_decision})")]

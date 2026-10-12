@@ -64,6 +64,8 @@ RULE_PLAIN_LANGUAGE = {
     "R4": "Income was not declared, so it must be verified before a decision is made.",
     "R5": "Payment history could not be confirmed, so a person must review the file before any "
           "automated decline can be finalised.",
+    "R6": "Once the new loan's monthly repayment is added, debt payments would be more than half of "
+          "income, so an affordability check is required.",
 }
 
 

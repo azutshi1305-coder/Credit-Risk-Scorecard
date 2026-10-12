@@ -24,6 +24,37 @@ HELP = {
         "Don't include mortgages, car loans or other fixed loans. It can be above 100 if "
         "accounts are over their limit."
     ),
+    "balances": (
+        "The total amount currently owed across all credit cards and personal credit lines. "
+        "Each card's balance is on its latest statement or in the banking app.\n\n"
+        "Don't include mortgages, car loans or other fixed loans."
+    ),
+    "limits": (
+        "The total of the credit limits on those same cards and credit lines — the most that could "
+        "be borrowed on them.\n\n"
+        "**Example:** two cards with limits of 30,000 and 20,000 → **50,000**."
+    ),
+    "no_cards": (
+        "Switch this on if the applicant has no credit cards or personal credit lines at all. "
+        "Their credit use is then counted as 0%."
+    ),
+    "debt_payments": (
+        "Everything they pay each month towards debts and fixed obligations: loan EMIs, minimum "
+        "credit card payments, rent or mortgage, and other regular commitments.\n\n"
+        "The app divides this by monthly income to get the debt-to-income ratio. Above 50% "
+        "triggers an affordability check."
+    ),
+    "loan_amount": (
+        "How much the applicant wants to borrow on this application."
+    ),
+    "interest_rate": (
+        "The yearly interest rate offered on the loan, e.g. **12** for 12% a year. Used only to work out "
+        "the monthly repayment — it doesn't change the score."
+    ),
+    "loan_term": (
+        "How many months the loan is repaid over. A longer period means smaller monthly repayments "
+        "but more interest in total."
+    ),
     "late_30_59": (
         "**What it is:** how many times in the last two years a payment was between 30 and 59 "
         "days overdue (and didn't become more overdue than that).\n\n"
