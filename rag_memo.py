@@ -120,7 +120,8 @@ def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
     import anthropic
 
     chunks = retrieve_for_applicant(decision, reason_list, retriever)
-    client = anthropic.Anthropic(api_key=api_key)
+    # A memo is short; fail fast on a bad connection instead of hanging the app.
+    client = anthropic.Anthropic(api_key=api_key, timeout=60.0, max_retries=2)
 
     friendly_reasons = "\n".join(
         f"- {friendly_reason(r['variable'], r['applicant_bin'])} ({r['points_lost']:.0f} points lost vs. best bin)"
@@ -131,12 +132,14 @@ def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
     policy_text = "\n\n".join(f"[{c['citation']}] ({c['doc']} -- {c['section']})\n{c['text']}" for c in chunks)
 
     system = (
-        "You are a credit memo writer for Sample Bank (a fictional lender used for a portfolio project). "
+        "You are a credit memo writer for Sample Bank's retail credit team. "
         "Write a short, professional credit memo using ONLY the retrieved policy text provided below -- "
         "do not invent policy that isn't in the retrieved text. "
         "Every policy-based statement you make must cite the retrieved chunk it came from, in the form [1], [2], etc., "
         "matching the bracketed numbers given with each chunk. "
         "Never mention age, number of dependents, or any other protected characteristic, even to say they were excluded. "
+        "Leave out any field you have no information for (dates, preparer, signatures) instead of writing 'Not provided'. "
+        "Prefer short paragraphs and bullet lists over tables; keep the memo under about 450 words. "
         "Never use internal system notation in the memo text: no raw scorecard variable names "
         "(e.g. 'RevolvingUtilizationOfUnsecuredLines'), no bin notation or numeric intervals "
         "(e.g. '(0.978, 50708.0]' or '1 | 2 | 3+'). Every characteristic must be described only in the "
@@ -158,14 +161,26 @@ def generate_memo(applicant_id, decision, reason_list, retriever) -> str:
     )
 
     response = client.messages.create(
-        model="claude-opus-5-5",
-        max_tokens=4096,
-        output_config={"effort": "medium"},
+        model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-5-5"),
+        max_tokens=1600,
         system=system,
         messages=[{"role": "user", "content": user_message}],
     )
     return next((b.text for b in response.content if b.type == "text"), "")
 
+
+def generate_memo_with_mode(applicant_id, decision, reason_list, retriever):
+    """Like generate_memo, but never raises: if the Claude call fails (no internet,
+    timeout, bad key, outage) the app falls back to the template memo and says so.
+    Returns (memo_markdown, mode) where mode is "claude", "template" or "fallback"."""
+    load_dotenv()
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return build_fallback_memo(applicant_id, decision, reason_list, retriever), "template"
+    try:
+        return generate_memo(applicant_id, decision, reason_list, retriever), "claude"
+    except Exception as exc:  # network errors, timeouts, auth errors, rate limits
+        print(f"[rag_memo] Claude memo failed, using template instead: {type(exc).__name__}: {exc}")
+        return build_fallback_memo(applicant_id, decision, reason_list, retriever), "fallback"
 
 if __name__ == "__main__":
     result = run_pipeline(verbose=False)

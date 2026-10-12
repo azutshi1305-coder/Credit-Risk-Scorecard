@@ -34,7 +34,7 @@ NEXT_STEP = {
     "Approve": "The application proceeds to offer and documentation.",
     "Approve with conditions": "The application proceeds once the listed conditions are satisfied.",
     "Refer to underwriter": "An underwriter reviews the file before any decision is made.",
-    "Manual review": "An underwriter reviews the file -- the automated system could not confirm "
+    "Manual review": "An underwriter reviews the file — the automated system could not confirm "
                       "enough information to decide on its own.",
     "Decline": "The application does not proceed. The applicant may request the reasons for this decision.",
 }
@@ -72,6 +72,8 @@ def plain_value(variable: str, raw_value) -> str:
     if raw_value is None or (isinstance(raw_value, float) and pd.isna(raw_value)):
         if variable in _DELINQUENCY_LABELS:
             return "Payment history unavailable"
+        if variable == "DebtRatio":
+            return "Can't be measured — income not declared"
         return "Not available"
 
     if variable == "RevolvingUtilizationOfUnsecuredLines":
