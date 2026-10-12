@@ -188,8 +188,17 @@ def _polar(cx, cy, r, deg):
 
 
 def dial_svg(score, band, cutoffs, width=300, hub_label="points") -> str:
-    """Half-donut score dial: five band arcs (E→A, left→right) and a needle at the score.
-    Pure SVG, so it renders through st.html with no JavaScript."""
+    """The score dial as an <img>. st.html strips inline <svg> for security, so the
+    SVG is embedded as a base64 data URI, which it allows."""
+    import base64
+    svg = _dial_svg_markup(score, band, cutoffs, width, hub_label).strip()
+    data = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return (f'<img class="sb-dial-img" src="data:image/svg+xml;base64,{data}" '
+            f'alt="Score {score:.0f}, band {band}" width="{width}">')
+
+
+def _dial_svg_markup(score, band, cutoffs, width=300, hub_label="points") -> str:
+    """Half-donut score dial: five band arcs (E→A, left→right) and a needle at the score."""
     from ui.theme import DIAL
     segments, marker = ruler_segments(score, cutoffs)
     cx, cy, ro, ri = 150, 140, 120, 80
@@ -214,9 +223,9 @@ def dial_svg(score, band, cutoffs, width=300, hub_label="points") -> str:
     # needle drawn pointing right (0deg) and rotated, so the CSS transition can animate it
     rot = -needle_deg
     return f"""
-    <svg viewBox="0 0 300 208" width="{width}" role="img" aria-label="Score {score:.0f}, band {band}">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 208" width="{width}" height="{width * 208 / 300:.0f}">
       {paths}{labels}
-      <g class="sb-needle" style="transform-origin:{cx}px {cy}px; transform: rotate({rot:.1f}deg);">
+      <g transform="rotate({rot:.1f} {cx} {cy})">
         <line x1="{cx}" y1="{cy}" x2="{cx + ro + 6}" y2="{cy}" stroke="#16262A" stroke-width="5" stroke-linecap="round"/>
       </g>
       <circle cx="{cx}" cy="{cy}" r="9" fill="#16262A"/><circle cx="{cx}" cy="{cy}" r="4" fill="#B8872B"/>

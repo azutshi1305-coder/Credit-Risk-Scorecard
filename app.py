@@ -485,7 +485,7 @@ def render_form_page():
     a = _answers(d)
     progress = [
         ("Applicant", not _step_missing(0, d)),
-        ("Credit usage", not _step_missing(1, d)),
+        ("Credit cards", not _step_missing(1, d)),
         ("Payment history", not _step_missing(2, d)),
         ("Income & debt", not _step_missing(3, d)),
         ("The loan", not _step_missing(4, d)),

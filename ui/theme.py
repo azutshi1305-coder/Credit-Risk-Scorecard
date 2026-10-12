@@ -57,9 +57,11 @@ h1, h2, h3, .sb-lora {{ font-family: 'Lora', serif; }}
 /* ---- top bar (a real st.container(key="topbar"), full-bleed) ---- */
 .st-key-topbar {{
     background: var(--ledger); border-bottom: 3px solid var(--brass);
-    margin: 0 calc(-50vw + 50%) 2rem calc(-50vw + 50%) !important;
+    width: 100vw !important; max-width: 100vw !important; box-sizing: border-box;
+    margin: 0 0 2rem calc(50% - 50vw) !important;
     padding: 1rem max(1.5rem, calc(50vw - 600px)) !important;
 }}
+section.main, [data-testid="stMain"], [data-testid="stAppViewContainer"] {{ overflow-x: hidden; }}
 .st-key-topbar div[data-testid="stHorizontalBlock"] {{ align-items: center; }}
 .sb-topbar-title {{ font-family: 'Lora', serif; font-weight: 600; font-size: 1.3rem; color: #fff; }}
 .sb-topbar-sub {{ font-size: 0.82rem; color: {COLORS['top_bar_sub']}; margin-top: 0.1rem; }}
@@ -69,6 +71,8 @@ h1, h2, h3, .sb-lora {{ font-family: 'Lora', serif; }}
     width: 2.4rem; height: 2.4rem; border-radius: 8px; background: var(--brass); color: #fff;
     display: flex; align-items: center; justify-content: center;
     font-family: 'Lora', serif; font-weight: 600; font-size: 1rem; letter-spacing: 0.02em;
+    background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M4 17a8 8 0 0 1 16 0'/%3E%3Cpath d='M12 17l4.2-5.2'/%3E%3Ccircle cx='12' cy='17' r='1.4' fill='white' stroke='none'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center;
+    background-size: 1.45rem;
 }}
 
 /* Segmented controls (Streamlit renders them as a button group). Topbar version: white on green. */
@@ -107,7 +111,7 @@ h1, h2, h3, .sb-lora {{ font-family: 'Lora', serif; }}
 .sb-live-title {{ font-family: 'Lora', serif; font-weight: 600; font-size: 1.15rem; }}
 .sb-live-sub {{ color: var(--muted); font-size: 0.8rem; margin-bottom: 0.6rem; }}
 .sb-live-dial {{ display: flex; justify-content: center; margin: 0.2rem 0 0.4rem; }}
-.sb-live-dial svg {{ width: 100%; max-width: 300px; height: auto; }}
+.sb-live-dial svg, .sb-live-dial img {{ width: 100%; max-width: 300px; height: auto; }}
 .sb-live-dial svg .sb-needle {{ transition: transform .45s cubic-bezier(.3,1.3,.5,1); }}
 .sb-live-decision {{ text-align: center; font-weight: 600; font-size: 0.95rem; margin-top: .2rem; }}
 .sb-live-chips {{ display: flex; flex-wrap: wrap; gap: .35rem; justify-content: center; margin: .6rem 0 .2rem; }}
